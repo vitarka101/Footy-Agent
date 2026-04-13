@@ -1,0 +1,22 @@
+
+
+python3 -m pip install -r requirements.txt
+
+
+
+If you want to test the paths first without uploading:
+
+
+python3 football_data_to_gcs.py \
+  --dry-run \
+  --bucket footy-agent \
+  --project-id agentic-ai-ak5486 \
+  --countries England \
+  --seasons 2025-2026
+
+
+To actually push data into GCS:
+
+python3 football_data_to_gcs.py \
+  --bucket footy-agent \
+  --project-id agentic-ai-ak5486
