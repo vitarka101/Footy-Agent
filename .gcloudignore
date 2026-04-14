@@ -1,11 +1,12 @@
+.gcloudignore
+.git
+.gitignore
+.venv/
+venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.git/
-.venv/
-venv/
 .env
 .DS_Store
 artifacts/
-ui/index.html

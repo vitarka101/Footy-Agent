@@ -4,4 +4,8 @@ __pycache__/
 *.pyd
 .venv/
 venv/
+.uv-cache/
 .env
+artifacts/
+*.duckdb
+*.duckdb.wal

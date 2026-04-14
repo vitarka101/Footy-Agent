@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Footy Analyst</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page-glow page-glow-left"></div>
+    <div class="page-glow page-glow-right"></div>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">
+            <span></span>
+          </div>
+          <div>
+            <p class="brand-kicker">DuckDB + EDA Copilot</p>
+            <h1>Footy Analyst</h1>
+          </div>
+        </div>
+
+        <nav class="nav-pills" aria-label="Primary">
+          <button class="pill pill-active" type="button">Analyst Desk</button>
+          <button class="pill" type="button">Trend Lab</button>
+          <button class="pill" type="button">Dataset Pulse</button>
+        </nav>
+
+        <div class="status-cluster">
+          <div class="live-pill">
+            <span class="live-dot"></span>
+            <span>DuckDB Live</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="dashboard-grid">
+        <aside class="panel sidebar-panel">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">Coverage</p>
+              <h2>Dataset Pulse</h2>
+            </div>
+          </div>
+
+          <div id="metric-grid" class="metric-grid"></div>
+
+          <section class="subpanel">
+            <div class="subpanel-header">
+              <div>
+                <p class="section-kicker">Live Snapshot</p>
+                <h3>Latest League Read</h3>
+              </div>
+            </div>
+            <div id="league-snapshot" class="league-snapshot"></div>
+          </section>
+        </aside>
+
+        <section class="panel chat-panel">
+          <div class="hero-strip">
+            <div class="hero-copy">
+              <p id="hero-eyebrow" class="section-kicker">Football analyst cockpit</p>
+              <h2 id="hero-title">Ask football questions, trigger EDA, and get grounded answers.</h2>
+              <p id="hero-description" class="hero-description">
+                The assistant will run explicit analysis steps before it answers.
+              </p>
+            </div>
+
+            <div class="hero-orbit">
+              <div class="orbit-core">
+                <div class="orbit-ring orbit-ring-a"></div>
+                <div class="orbit-ring orbit-ring-b"></div>
+                <div class="orbit-pitch"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="prompt-zone">
+            <p class="section-kicker">Quick asks</p>
+            <div id="prompt-chips" class="prompt-chips"></div>
+          </div>
+
+          <div class="chat-shell">
+            <div id="chat-log" class="chat-log" aria-live="polite"></div>
+
+            <form id="chat-form" class="chat-form">
+              <label class="chat-label" for="chat-input">Ask the analyst</label>
+              <div class="chat-input-row">
+                <textarea
+                  id="chat-input"
+                  name="message"
+                  rows="1"
+                  placeholder="Ask about home advantage, scoring trends, league comparisons, or data quality..."
+                ></textarea>
+                <button id="send-button" class="send-button" type="submit">Run Analysis</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <aside class="panel console-panel">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">Execution</p>
+              <h2>Analyst Console</h2>
+            </div>
+          </div>
+
+          <section id="spotlight-card" class="spotlight-card"></section>
+
+          <section class="subpanel">
+            <div class="subpanel-header">
+              <div>
+                <p class="section-kicker">Tool Stack</p>
+                <h3>EDA Modules</h3>
+              </div>
+            </div>
+            <div id="tool-cards" class="tool-cards"></div>
+          </section>
+
+          <section class="subpanel">
+            <div class="subpanel-header">
+              <div>
+                <p class="section-kicker">Runbook</p>
+                <h3>How Answers Are Built</h3>
+              </div>
+            </div>
+            <ol id="runbook-list" class="runbook-list"></ol>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>

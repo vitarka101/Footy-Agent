@@ -1,0 +1,30 @@
+[project]
+name = "footy-agent"
+version = "0.2.0"
+description = "Footy Agent — a football analytics chatbot backed by DuckDB, EDA tools, and Google Cloud storage."
+requires-python = ">=3.10"
+dependencies = [
+    "beautifulsoup4>=4.12,<5",
+    "duckdb>=1.1,<2",
+    "fastapi>=0.115,<1",
+    "google-cloud-aiplatform>=1.40,<2",
+    "google-cloud-storage>=2.16,<3",
+    "litellm>=1.79.0,<2",
+    "pandas>=2.2,<3",
+    "plotly>=5.24,<7",
+    "pyarrow>=17,<22",
+    "python-dotenv>=1.0,<2",
+    "pytest>=8.0,<9",
+    "requests>=2.32,<3",
+    "uvicorn>=0.30,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["evals"]
+
+[tool.uv]
+package = false

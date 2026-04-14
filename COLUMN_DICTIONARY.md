@@ -1,6 +1,6 @@
 # Column Dictionary
 
-This file documents the standardized Parquet column names produced by `football_data_to_gcs.py`.
+This file documents the standardized Parquet column names produced by both `historical_football_data_to_gcs.py` and `football_data_to_gcs.py`.
 
 The source data comes from `football-data.co.uk`. During ingestion, column names are normalized to make them safe for BigQuery and easier to query consistently across seasons.
 

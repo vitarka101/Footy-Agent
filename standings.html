@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Footy Agent Standings</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page-glow page-glow-left"></div>
+    <div class="page-glow page-glow-right"></div>
+
+    <div class="app-shell standings-page-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">
+            <span></span>
+          </div>
+          <div>
+            <p class="brand-kicker">Live League Tables</p>
+            <h1>Standings</h1>
+          </div>
+        </div>
+
+        <nav class="nav-pills" aria-label="Primary">
+          <a class="pill pill-link" href="/">Analyst Desk</a>
+          <button class="pill pill-active" type="button">Standings</button>
+        </nav>
+
+        <div class="status-cluster">
+          <button id="refresh-data-button" class="refresh-button" type="button">Refresh Data</button>
+          <div id="refresh-status-badge" class="status-note">Syncs recent matches to GCS and DuckDB</div>
+        </div>
+      </header>
+
+      <main class="standings-page-grid">
+        <section id="standings-panel" class="panel standings-page-panel">
+          <div class="standings-layout">
+            <aside class="standings-side-column">
+              <section class="standings-pulse">
+                <div class="panel-header">
+                  <div>
+                    <p class="section-kicker">Coverage</p>
+                    <h2 id="standings-pulse-title">League Pulse</h2>
+                  </div>
+                </div>
+                <p id="standings-pulse-summary" class="standings-pulse-summary"></p>
+                <div id="standings-pulse-grid" class="metric-grid standings-pulse-grid"></div>
+              </section>
+            </aside>
+
+            <section class="standings-main-column">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Current Table</p>
+                  <h2 id="standings-title">Standings</h2>
+                </div>
+                <div id="standings-season-badge" class="tool-tag">Season</div>
+              </div>
+
+              <div class="standings-controls standings-controls-wide">
+                <label class="standings-filter">
+                  <span>Country</span>
+                  <select id="standings-country"></select>
+                </label>
+                <label class="standings-filter">
+                  <span>League</span>
+                  <select id="standings-league"></select>
+                </label>
+              </div>
+
+              <div id="standings-table" class="standings-table-wrap standings-table-page"></div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/standings.js" type="module"></script>
+  </body>
+</html>
