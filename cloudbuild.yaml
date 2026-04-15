@@ -12,6 +12,6 @@ steps:
       - "footy-agent"
       - "--image=gcr.io/$PROJECT_ID/footy-agent"
       - "--region=us-central1"
-      - "--allow-unauthenticated"
+      - "--no-allow-unauthenticated"
       - "--port=8080"
       - "--update-env-vars=MODEL=vertex_ai/gemini-2.5-flash-lite,DUCKDB_PATH=football_data.duckdb"

@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 from google.cloud import storage
 from pydantic import BaseModel, Field
 
-from football_web_fallback import build_web_fallback_bundle
+from scripts.football_web_fallback import build_web_fallback_bundle
 
 try:
     from litellm import completion

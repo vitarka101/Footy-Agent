@@ -2,7 +2,7 @@
 
 Footy Agent is now structured like a deployable single-app project:
 
-- `app.py` is the FastAPI entrypoint
+- `scripts/app.py` is the FastAPI entrypoint
 - `index.html` is the root frontend entrypoint
 - `pyproject.toml` supports `uv`-based local/dev workflow
 - `cloudbuild.yaml` deploys the app to Cloud Run
@@ -54,12 +54,12 @@ Other countries will have their own partition values based on the names used on 
 
 ## Files
 
-- `app.py`: Main FastAPI application with model-backed chat, DuckDB bootstrap, and zip-style routes.
+- `scripts/app.py`: Main FastAPI application with model-backed chat, DuckDB bootstrap, and zip-style routes.
 - `index.html`: Root landing page for the football analyst UI.
 - `historical_football_data_to_gcs.py`: Full-history backfill into GCS and optional DuckDB.
 - `football_data_to_gcs.py`: Incremental refresh script for the last 1-2 days of activity, suitable for cronjobs or backend-triggered refreshes.
 - `football_eda.py`: Python EDA toolset for the England four-tier dataset in DuckDB, modeled on the reference `data.qmd` workflow.
-- `football_ui_service.py`: Backend analytics helpers used by the web UI chat and dashboard. The chat layer resolves country and league names from the user question and can analyze the full warehouse.
+- `scripts/football_ui_service.py`: Backend analytics helpers used by the web UI chat and dashboard. The chat layer resolves country and league names from the user question and can analyze the full warehouse.
 - `ui/`: CSS and JS assets for the landing page.
 - `pyproject.toml`: `uv` project definition for local and Docker workflows.
 - `requirements.txt`: Pip-compatible dependency list.
@@ -154,7 +154,7 @@ This structure makes the EDA phase explicit and tool-driven rather than a direct
 ### Framework, Tool Calling, and Multi-Agent Design
 
 - `Agent framework`: the app now uses `Agno` agents for EDA planning and specialist orchestration, with LiteLLM-backed models underneath.
-- `Real tool calling`: the chat router in `app.py` uses LiteLLM `tools` plus `tool_choice="auto"` so the model can invoke `run_runtime_query` and `run_analysis_pipeline` as actual function calls.
+- `Real tool calling`: the chat router in `scripts/app.py` uses LiteLLM `tools` plus `tool_choice="auto"` so the model can invoke `run_runtime_query` and `run_analysis_pipeline` as actual function calls.
 - `Distinct specialist agents`: the warehouse EDA path creates role-specific agents for trend, comparison, correlation, quality, and distribution analysis. Each specialist has separate instructions, calls its specialist tool, and runs concurrently.
 - `Grounded hypothesis objects`: the final hypothesis now carries machine-readable `evidence_objects` tied back to profile, trend, correlation, and quality outputs in addition to human-readable evidence bullets.
 
@@ -164,10 +164,10 @@ The repo also includes a completely separate betting page at `/betting-room-page
 
 What was ported from that repo:
 
-- `Poisson-family match models`: [betting_room_service.py](betting_room_service.py) ports the original repo logic for `estimateParams`, `predictMatch`, `simulateLeague`, `computeTable`, `poissonGoodnessOfFitTest`, `independenceTest`, and `dispersionTest` into Python equivalents such as `estimate_params`, `predict_match_tool`, `simulate_league_tool`, `compute_table`, `poisson_goodness_of_fit_test`, `independence_test`, and `dispersion_test`.
-- `Runtime collection from football-data.co.uk`: [betting_room_service.py](betting_room_service.py) implements `collect_match_data_tool`, `fetch_external_season_matches`, and `fetch_runtime_csv`, which fetch season CSVs at runtime and cache artifacts under `artifacts/betting_room/`.
+- `Poisson-family match models`: [scripts/betting_room_service.py](scripts/betting_room_service.py) ports the original repo logic for `estimateParams`, `predictMatch`, `simulateLeague`, `computeTable`, `poissonGoodnessOfFitTest`, `independenceTest`, and `dispersionTest` into Python equivalents such as `estimate_params`, `predict_match_tool`, `simulate_league_tool`, `compute_table`, `poisson_goodness_of_fit_test`, `independence_test`, and `dispersion_test`.
+- `Runtime collection from football-data.co.uk`: [scripts/betting_room_service.py](scripts/betting_room_service.py) implements `collect_match_data_tool`, `fetch_external_season_matches`, and `fetch_runtime_csv`, which fetch season CSVs at runtime and cache artifacts under `artifacts/betting_room/`.
 - `Standalone frontend`: [betting_room.html](betting_room.html), [ui/betting_room.js](ui/betting_room.js), and [ui/betting_room.css](ui/betting_room.css) render a separate betting-room experience with probability bars, exact-score matrix, EDA tests, league-table comparison, and backend tool trace.
-- `Standalone API`: [app.py](app.py) adds `/betting-room-page`, `/betting/options`, and `/betting/analyze` as separate additive routes so the existing chat and standings flow stays intact.
+- `Standalone API`: [scripts/app.py](scripts/app.py) adds `/betting-room-page`, `/betting/options`, and `/betting/analyze` as separate additive routes so the existing chat and standings flow stays intact.
 
 How the betting room maps to the homework steps:
 
@@ -433,7 +433,7 @@ The web app is chat-first. The landing page keeps the assistant in the center an
 Run the UI locally:
 
 ```bash
-uv run uvicorn app:app --reload
+uv run uvicorn scripts.app:app --reload
 ```
 
 Then open:

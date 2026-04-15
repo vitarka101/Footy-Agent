@@ -310,29 +310,59 @@
 }
 
 .betting-matrix-header {
-  background: rgba(10, 19, 35, 0.9);
-  color: #22d3ee;
+  background: linear-gradient(180deg, rgba(8, 18, 34, 1), rgba(14, 28, 48, 0.98));
+  color: #5ee7ff;
+  border: 1px solid rgba(94, 231, 255, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .betting-matrix-header-corner {
-  color: #7e93ad;
+  color: #a7b9cf;
 }
 
 .betting-matrix-cell {
-  background: rgba(9, 14, 27, 0.88);
-  color: #d7e2ef;
+  background: rgba(8, 12, 24, 0.98);
+  color: rgba(245, 250, 255, var(--cell-text-alpha, 0.8));
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  font-weight: var(--cell-weight, 600);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
 }
 
 .betting-matrix-cell-home {
-  background: rgba(34, 211, 238, 0.28);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(103, 232, 249, var(--cell-alpha, 0.45)),
+      rgba(6, 182, 212, calc(var(--cell-alpha, 0.45) * 0.98))
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 0 20px rgba(34, 211, 238, var(--cell-glow, 0.2));
 }
 
 .betting-matrix-cell-draw {
-  background: rgba(167, 139, 250, 0.28);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(196, 181, 253, var(--cell-alpha, 0.45)),
+      rgba(139, 92, 246, calc(var(--cell-alpha, 0.45) * 0.98))
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 0 20px rgba(167, 139, 250, var(--cell-glow, 0.2));
 }
 
 .betting-matrix-cell-away {
-  background: rgba(244, 114, 182, 0.28);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(251, 113, 133, var(--cell-alpha, 0.45)),
+      rgba(236, 72, 153, calc(var(--cell-alpha, 0.45) * 0.98))
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 0 20px rgba(244, 114, 182, var(--cell-glow, 0.2));
 }
 
 .betting-hypothesis h3 {

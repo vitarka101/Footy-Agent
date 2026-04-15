@@ -1,7 +1,7 @@
 import duckdb
 
-from football_ui_service import chat_response, detect_intent, parse_gcs_uri, resolve_scope
-from app import compact_table_context, provider_label
+from scripts.football_ui_service import chat_response, detect_intent, parse_gcs_uri, resolve_scope
+from scripts.app import compact_table_context, provider_label
 
 
 def test_detect_intent_home_advantage() -> None:

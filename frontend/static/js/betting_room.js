@@ -112,13 +112,24 @@ function renderProbabilities(probabilities) {
 
 function renderMatrix(scoreMatrix) {
   const columns = Array.from({ length: 9 }, (_, index) => `<div class="betting-matrix-header">${index}</div>`).join("");
+  const maxValue = Math.max(
+    0,
+    ...scoreMatrix.rows
+      .slice(0, 9)
+      .flatMap((row) => Array.from({ length: 9 }, (_, index) => Number(row[String(index)] ?? 0))),
+  );
   const rows = scoreMatrix.rows
     .slice(0, 9)
     .map((row) => {
       const cells = Array.from({ length: 9 }, (_, index) => {
         const value = Number(row[String(index)] ?? 0);
         const tone = row.home_goals > index ? "home" : row.home_goals < index ? "away" : "draw";
-        return `<div class="betting-matrix-cell betting-matrix-cell-${tone}" style="opacity:${Math.max(value / 20, 0.12)}">${value.toFixed(1)}</div>`;
+        const intensity = maxValue > 0 ? value / maxValue : 0;
+        const alpha = Math.max(0.34, Math.min(1, 0.34 + intensity * 0.86));
+        const glow = Math.max(0.12, Math.min(0.95, 0.12 + intensity * 0.83));
+        const textAlpha = Math.max(0.76, Math.min(1, 0.76 + intensity * 0.24));
+        const weight = intensity > 0.7 ? 800 : intensity > 0.35 ? 700 : 600;
+        return `<div class="betting-matrix-cell betting-matrix-cell-${tone}" style="--cell-alpha:${alpha.toFixed(3)}; --cell-glow:${glow.toFixed(3)}; --cell-text-alpha:${textAlpha.toFixed(3)}; --cell-weight:${weight}">${value.toFixed(1)}</div>`;
       }).join("");
       return `<div class="betting-matrix-header">${row.home_goals}</div>${cells}`;
     })

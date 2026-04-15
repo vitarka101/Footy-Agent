@@ -10,7 +10,7 @@ python3 -m pip install -r requirements.txt
 
 Run the web app locally:
 
-uv run uvicorn app:app --reload
+uv run uvicorn scripts.app:app --reload
 
 
 Open in browser:
@@ -86,7 +86,7 @@ python3 football_eda.py all \
 
 
 uv sync
-uv run uvicorn app:app --reload
+uv run uvicorn scripts.app:app --reload
 
 lsof -ti :8000 | xargs kill -9
 

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from betting_room_service import MODEL_NAMES, options_payload, run_betting_analysis
+from scripts.betting_room_service import MODEL_NAMES, options_payload, run_betting_analysis
 
 
 def test_betting_room_options_load_team_choices() -> None:

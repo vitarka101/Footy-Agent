@@ -14,7 +14,7 @@ from typing import Literal
 import duckdb
 import requests
 
-from football_ui_service import DEFAULT_DUCKDB_PATH
+from scripts.football_ui_service import DEFAULT_DUCKDB_PATH
 
 MAX_GOALS = 8
 MODEL_NAMES = [
@@ -36,7 +36,8 @@ LEAGUE_IDS = {
     "SC0": {"country": "Scotland", "league": "Premiership", "warehouse_league": "Premier League"},
     "T1": {"country": "Turkey", "league": "Super Lig", "warehouse_league": "Futbol Ligi 1"},
 }
-ARTIFACTS_DIR = Path(__file__).resolve().parent / "artifacts" / "betting_room"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "betting_room"
 DATA_DIR = ARTIFACTS_DIR / "data"
 REPORTS_DIR = ARTIFACTS_DIR / "reports"
 CACHE_TTL_SECONDS = 12 * 60 * 60
@@ -1170,5 +1171,5 @@ def run_betting_analysis(
         "source_methods": ["web_csv_fetch", "artifact_cache" if "artifact_cache" in collection["sources_used"] else "duckdb_fallback"],
     }
     artifact_path = write_analysis_artifact(payload, league_id, season_name, home_team, away_team)
-    payload["artifact_path"] = str(artifact_path.relative_to(Path(__file__).resolve().parent))
+    payload["artifact_path"] = str(artifact_path.relative_to(REPO_ROOT))
     return payload
