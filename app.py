@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -29,9 +31,12 @@ from football_ui_service import (
     chat_response,
     dashboard_payload,
     ensure_duckdb_file,
+    open_connection,
     parse_gcs_uri,
     standings_payload,
+    table_payload,
 )
+from betting_room_service import MODEL_NAMES as BETTING_MODELS, options_payload as betting_options_payload, run_betting_analysis
 
 if load_dotenv is not None:
     load_dotenv(override=True)
@@ -40,6 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "ui"
 INDEX_HTML_PATH = BASE_DIR / "index.html"
 STANDINGS_HTML_PATH = BASE_DIR / "standings.html"
+BETTING_ROOM_HTML_PATH = BASE_DIR / "betting_room.html"
 
 LOGGER = logging.getLogger("footy_agent")
 
@@ -67,12 +73,74 @@ SYSTEM_PROMPT = """\
 You are Footy Agent, a football analytics assistant.
 
 Rules:
-- Use only the analytical context and tool outputs provided to you.
+# - Use only the analytical context and tool outputs provided to you.
 - Mention the EDA steps that were run before the conclusion.
 - Be concise, clear, and evidence-led.
 - Do not invent rows, seasons, teams, or statistics that are not in the tool output.
 - If the data slice is limited, say so directly.
 - Keep the final answer under 1800 characters.
+"""
+
+QUERY_PLANNER_SYSTEM_PROMPT = """\
+You are a DuckDB query planner for a football dataset.
+
+You must answer with strict JSON only. No markdown.
+
+Available table:
+- matches
+
+Important columns:
+- country, league, season
+- date, time
+- hometeam, awayteam
+- fthg, ftag, ftr
+- hthg, htag, htr
+- hs, "as", hst, ast
+- hc, ac, hy, ay, hr, ar
+- referee
+
+Rules:
+- Only produce read-only SQL using SELECT or WITH.
+- Only query the matches table.
+- Use try_strptime(date, '%d/%m/%Y') when ordering by match date.
+- Quote the away shots column exactly as "as" if used.
+- If the question cannot be answered from the matches table alone, set applicable to false.
+- Prefer concise aggregate queries.
+- If returning detailed rows, limit the result to at most 20 rows inside the SQL.
+
+Return JSON with this exact shape:
+{
+  "applicable": true,
+  "sql": "SELECT ...",
+  "title": "short result title",
+  "reason": "one sentence"
+}
+"""
+
+QUERY_SUMMARY_SYSTEM_PROMPT = """\
+You are Footy Agent summarizing a DuckDB query result.
+
+Rules:
+- Answer the user's question directly from the query result.
+- Be concise and factual.
+- Do not mention missing tools or lack of context if the table answers the question.
+- If the result does not settle the question, say what is missing.
+- Keep the answer under 120 words.
+"""
+
+TOOL_ROUTER_SYSTEM_PROMPT = """\
+You are Footy Agent's tool-using router.
+
+You must choose tools before answering whenever useful.
+
+Available tools:
+- run_runtime_query: use for direct fact lookups or SQL-answerable questions against the matches table
+- run_analysis_pipeline: use for broader football analysis, EDA, standings, trends, team performance, or external football fallback
+
+Rules:
+- Prefer run_runtime_query for narrow lookup-style questions.
+- Prefer run_analysis_pipeline for anything exploratory, comparative, team-history based, or if external football info may be needed.
+- After receiving tool output, answer briefly and faithfully from the tool result.
 """
 
 print(f"[STARTUP] MODEL={MODEL}")
@@ -90,6 +158,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
+    executive_summary: list[str] = []
     tool_calls: list[dict]
     highlights: list[dict]
     table: dict | None = None
@@ -102,6 +171,192 @@ class ChatResponse(BaseModel):
     fallback_used: bool
     data_mode: str | None = None
     out_of_context: bool = False
+    is_conversational: bool = False
+    is_simple_response: bool = False
+
+
+class BettingRoomRequest(BaseModel):
+    league_id: str
+    season: str
+    home_team: str
+    away_team: str
+    model: str = "Maher"
+    train_pct: float = 0.7
+    xi: float = 0.005
+    force_refresh: bool = False
+    duckdb_path: str = DUCKDB_PATH
+
+
+def extract_json_object(value: str) -> dict | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not match:
+            return None
+        try:
+            parsed = json.loads(match.group(0))
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
+
+
+def validate_runtime_sql(sql: str) -> str | None:
+    normalized = (sql or "").strip()
+    if not normalized:
+        return None
+    if ";" in normalized:
+        return None
+    lowered = normalized.casefold()
+    if not (lowered.startswith("select") or lowered.startswith("with")):
+        return None
+    banned = (
+        "insert ",
+        "update ",
+        "delete ",
+        "drop ",
+        "alter ",
+        "create ",
+        "attach ",
+        "copy ",
+        "export ",
+        "install ",
+        "load ",
+        "call ",
+        "pragma ",
+        "vacuum ",
+    )
+    if any(token in lowered for token in banned):
+        return None
+    if " matches" not in f" {lowered} ":
+        return None
+    return normalized
+
+
+def summarize_query_table(frame) -> str:
+    if frame.empty:
+        return "No rows returned."
+    sample = frame.head(12)
+    return compact_table_context(table_payload(sample), max_rows=12)
+
+
+def try_runtime_query_payload(message: str, duckdb_path: str, fallback_payload: dict) -> tuple[dict | None, bool]:
+    if completion is None:
+        return None, True
+
+    skip_modes = {"knowledge", "lookup", "conversation", "direct", "none", "external_fact"}
+    if fallback_payload.get("out_of_context") or fallback_payload.get("is_conversational") or fallback_payload.get("is_simple_response"):
+        return None, True
+    if fallback_payload.get("data_mode") in skip_modes:
+        return None, True
+
+    planner_messages = [
+        {"role": "system", "content": QUERY_PLANNER_SYSTEM_PROMPT},
+        {"role": "user", "content": f"User question: {message}"},
+    ]
+    planner_kwargs = {
+        "model": MODEL,
+        "messages": planner_messages,
+        "temperature": 0,
+        "timeout": MODEL_TIMEOUT_SECONDS,
+    }
+    if LITELLM_API_BASE:
+        planner_kwargs["api_base"] = LITELLM_API_BASE
+    if LITELLM_API_KEY:
+        planner_kwargs["api_key"] = LITELLM_API_KEY
+
+    try:
+        planner_response = completion(**planner_kwargs)
+        planner_content = (planner_response.choices[0].message.content or "").strip()
+        planner_payload = extract_json_object(planner_content) or {}
+    except Exception as exc:  # pragma: no cover - planner runtime failure
+        LOGGER.warning("Runtime query planner failed: %s", exc)
+        return None, True
+
+    if not planner_payload.get("applicable"):
+        return None, True
+
+    sql = validate_runtime_sql(str(planner_payload.get("sql", "")))
+    if not sql:
+        return None, True
+
+    try:
+        connection = open_connection(duckdb_path)
+        try:
+            frame = connection.execute(f"SELECT * FROM ({sql}) AS runtime_query LIMIT 50").df()
+        finally:
+            connection.close()
+    except Exception as exc:  # pragma: no cover - query execution failure
+        LOGGER.warning("Runtime query execution failed: %s", exc)
+        return None, True
+
+    query_table = table_payload(frame) if not frame.empty else None
+    summary_messages = [
+        {"role": "system", "content": QUERY_SUMMARY_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"User question:\n{message}\n\n"
+                f"SQL used:\n{sql}\n\n"
+                f"Query result:\n{summarize_query_table(frame)}"
+            ),
+        },
+    ]
+    summary_kwargs = {
+        "model": MODEL,
+        "messages": summary_messages,
+        "temperature": 0.1,
+        "timeout": MODEL_TIMEOUT_SECONDS,
+    }
+    if LITELLM_API_BASE:
+        summary_kwargs["api_base"] = LITELLM_API_BASE
+    if LITELLM_API_KEY:
+        summary_kwargs["api_key"] = LITELLM_API_KEY
+
+    used_fallback = False
+    answer = ""
+    try:
+        summary_response = completion(**summary_kwargs)
+        answer = (summary_response.choices[0].message.content or "").strip()
+    except Exception as exc:  # pragma: no cover - summary runtime failure
+        LOGGER.warning("Runtime query summarizer failed: %s", exc)
+        used_fallback = True
+
+    if not answer:
+        used_fallback = True
+        if frame.empty:
+            answer = "I ran a runtime DuckDB query, but it returned no rows for that question."
+        elif len(frame) == 1 and len(frame.columns) == 1:
+            answer = f"The query result is {frame.iloc[0, 0]}."
+        else:
+            answer = "I ran a runtime DuckDB query and returned the matching result."
+
+    payload = {
+        "answer": answer,
+        "executive_summary": [],
+        "tool_calls": [],
+        "highlights": [],
+        "table": query_table,
+        "charts": [],
+        "hypothesis": None,
+        "sources": [],
+        "suggested_prompts": [
+            "Show the SQL result in more detail.",
+            "Ask a follow-up about the same team or league.",
+            "Compare this with another league or team.",
+        ],
+        "data_mode": "runtime_query",
+        "out_of_context": False,
+        "is_conversational": False,
+        "is_simple_response": True,
+        "intent": "runtime_query",
+        "scope": planner_payload.get("title") or "runtime query",
+    }
+    return payload, used_fallback
 
 
 class RefreshRequest(BaseModel):
@@ -225,6 +480,11 @@ Sources:
 
 
 def generate_model_answer(message: str, analysis_payload: dict) -> tuple[str, bool]:
+    if analysis_payload.get("is_simple_response") or analysis_payload.get("is_conversational") or analysis_payload.get("out_of_context"):
+        return analysis_payload["answer"], True
+    if analysis_payload.get("data_mode") in {"knowledge", "lookup", "conversation", "direct", "none", "external_fact"}:
+        return analysis_payload["answer"], True
+
     if completion is None:
         return analysis_payload["answer"], True
 
@@ -254,6 +514,196 @@ def generate_model_answer(message: str, analysis_payload: dict) -> tuple[str, bo
     return analysis_payload["answer"], True
 
 
+def llm_tool_definitions() -> list[dict]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "run_runtime_query",
+                "description": "Run a read-only DuckDB lookup for direct factual questions answerable from the matches table.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The user question to answer with a direct runtime DuckDB query.",
+                        }
+                    },
+                    "required": ["question"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "run_analysis_pipeline",
+                "description": "Run the full football analysis pipeline, including warehouse EDA or external football fallback.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The user question to answer through the analysis pipeline.",
+                        }
+                    },
+                    "required": ["question"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+    ]
+
+
+def tool_message_to_dict(message) -> dict:
+    if isinstance(message, dict):
+        return message
+    payload = {
+        "role": getattr(message, "role", "assistant"),
+        "content": getattr(message, "content", None),
+    }
+    tool_calls = getattr(message, "tool_calls", None)
+    if tool_calls:
+        normalized_calls = []
+        for call in tool_calls:
+            normalized_calls.append(
+                {
+                    "id": getattr(call, "id", None),
+                    "type": getattr(call, "type", "function"),
+                    "function": {
+                        "name": getattr(getattr(call, "function", None), "name", None),
+                        "arguments": getattr(getattr(call, "function", None), "arguments", "{}"),
+                    },
+                }
+            )
+        payload["tool_calls"] = normalized_calls
+    return payload
+
+
+def execute_llm_tool_call(tool_name: str, arguments: dict, duckdb_path: str) -> tuple[dict, bool]:
+    question = str(arguments.get("question", "")).strip()
+    if tool_name == "run_runtime_query":
+        runtime_payload, used_fallback = try_runtime_query_payload(question, duckdb_path, {})
+        if runtime_payload is None:
+            analysis_payload = chat_response(question, duckdb_path)
+            return analysis_payload, True
+        runtime_payload["tool_calls"] = [
+            {
+                "name": "llm_tool_runtime_query",
+                "label": "LLM Tool Call: Runtime Query",
+                "summary": "The model invoked the runtime DuckDB query tool.",
+            },
+            *(runtime_payload.get("tool_calls") or []),
+        ]
+        return runtime_payload, used_fallback
+    if tool_name == "run_analysis_pipeline":
+        analysis_payload = chat_response(question, duckdb_path)
+        analysis_payload["tool_calls"] = [
+            {
+                "name": "llm_tool_analysis_pipeline",
+                "label": "LLM Tool Call: Analysis Pipeline",
+                "summary": "The model invoked the full football analysis pipeline tool.",
+            },
+            *(analysis_payload.get("tool_calls") or []),
+        ]
+        return analysis_payload, False
+    raise ValueError(f"Unsupported tool: {tool_name}")
+
+
+def try_tool_calling_chat_payload(message: str, duckdb_path: str) -> tuple[dict | None, bool]:
+    if completion is None:
+        return None, True
+
+    messages: list[dict] = [
+        {"role": "system", "content": TOOL_ROUTER_SYSTEM_PROMPT},
+        {"role": "user", "content": message},
+    ]
+    completion_kwargs = {
+        "model": MODEL,
+        "messages": messages,
+        "tools": llm_tool_definitions(),
+        "tool_choice": "auto",
+        "temperature": 0,
+        "timeout": MODEL_TIMEOUT_SECONDS,
+    }
+    if LITELLM_API_BASE:
+        completion_kwargs["api_base"] = LITELLM_API_BASE
+    if LITELLM_API_KEY:
+        completion_kwargs["api_key"] = LITELLM_API_KEY
+
+    try:
+        first_response = completion(**completion_kwargs)
+    except Exception as exc:
+        LOGGER.warning("Tool-calling router failed, using fallback path: %s", exc)
+        return None, True
+
+    first_message = tool_message_to_dict(first_response.choices[0].message)
+    tool_calls = first_message.get("tool_calls") or []
+    if not tool_calls:
+        return None, True
+
+    messages.append(first_message)
+    selected_payload: dict | None = None
+    used_fallback = False
+
+    for tool_call in tool_calls[:2]:
+        function_payload = tool_call.get("function", {})
+        tool_name = function_payload.get("name", "")
+        try:
+            arguments = json.loads(function_payload.get("arguments") or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+        try:
+            tool_payload, tool_used_fallback = execute_llm_tool_call(tool_name, arguments, duckdb_path)
+        except Exception as exc:
+            LOGGER.warning("Tool execution failed for %s: %s", tool_name, exc)
+            return None, True
+        selected_payload = tool_payload
+        used_fallback = used_fallback or tool_used_fallback
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call.get("id"),
+                "name": tool_name,
+                "content": json.dumps(
+                    {
+                        "answer": tool_payload.get("answer"),
+                        "data_mode": tool_payload.get("data_mode"),
+                        "scope": tool_payload.get("scope"),
+                        "executive_summary": tool_payload.get("executive_summary", []),
+                        "hypothesis": tool_payload.get("hypothesis"),
+                        "table_preview": compact_table_context(tool_payload.get("table")),
+                    }
+                ),
+            }
+        )
+
+    if selected_payload is None:
+        return None, True
+
+    final_kwargs = {
+        "model": MODEL,
+        "messages": messages,
+        "temperature": 0.1,
+        "timeout": MODEL_TIMEOUT_SECONDS,
+    }
+    if LITELLM_API_BASE:
+        final_kwargs["api_base"] = LITELLM_API_BASE
+    if LITELLM_API_KEY:
+        final_kwargs["api_key"] = LITELLM_API_KEY
+
+    try:
+        final_response = completion(**final_kwargs)
+        final_answer = (final_response.choices[0].message.content or "").strip()
+        if final_answer:
+            selected_payload["answer"] = final_answer
+            return selected_payload, used_fallback
+    except Exception as exc:
+        LOGGER.warning("Tool-calling final answer failed, using tool payload answer: %s", exc)
+
+    return selected_payload, True
+
+
 def enriched_dashboard_payload(duckdb_path: str) -> dict:
     payload = dashboard_payload(duckdb_path)
     payload["runtime"] = {
@@ -266,7 +716,21 @@ def enriched_dashboard_payload(duckdb_path: str) -> dict:
 
 
 def build_chat_payload(message: str, duckdb_path: str) -> dict:
+    tool_payload, tool_fallback_used = try_tool_calling_chat_payload(message, duckdb_path)
+    if tool_payload is not None:
+        tool_payload["model"] = MODEL
+        tool_payload["provider"] = provider_label(MODEL)
+        tool_payload["fallback_used"] = tool_fallback_used
+        return tool_payload
+
     analysis_payload = chat_response(message, duckdb_path)
+    runtime_payload, runtime_fallback_used = try_runtime_query_payload(message, duckdb_path, analysis_payload)
+    if runtime_payload is not None:
+        runtime_payload["model"] = MODEL
+        runtime_payload["provider"] = provider_label(MODEL)
+        runtime_payload["fallback_used"] = runtime_fallback_used
+        return runtime_payload
+
     answer, fallback_used = generate_model_answer(message, analysis_payload)
     analysis_payload["answer"] = answer
     analysis_payload["model"] = MODEL
@@ -295,6 +759,11 @@ def read_index() -> FileResponse:
 @app.get("/standings-page")
 def read_standings_page() -> FileResponse:
     return FileResponse(STANDINGS_HTML_PATH)
+
+
+@app.get("/betting-room-page")
+def read_betting_room_page() -> FileResponse:
+    return FileResponse(BETTING_ROOM_HTML_PATH)
 
 
 @app.get("/health")
@@ -327,6 +796,50 @@ def get_standings(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover - runtime API protection
         raise HTTPException(status_code=500, detail=f"Failed to build standings: {exc}") from exc
+
+
+@app.get("/betting/options")
+@app.get("/api/betting/options")
+def get_betting_options(
+    league_id: str = "E0",
+    season: str | None = None,
+    duckdb_path: str = DUCKDB_PATH,
+) -> dict:
+    try:
+        return betting_options_payload(league_id=league_id, season_name=season, duckdb_path=duckdb_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - runtime API protection
+        raise HTTPException(status_code=500, detail=f"Failed to load betting room options: {exc}") from exc
+
+
+@app.post("/betting/analyze")
+@app.post("/api/betting/analyze")
+def post_betting_analysis(request: BettingRoomRequest) -> dict:
+    if request.model not in BETTING_MODELS:
+        raise HTTPException(status_code=400, detail=f"Unsupported model: {request.model}")
+    if not 0.3 <= request.train_pct <= 1.0:
+        raise HTTPException(status_code=400, detail="train_pct must be between 0.3 and 1.0.")
+    if request.home_team.strip() == request.away_team.strip():
+        raise HTTPException(status_code=400, detail="Home and away teams must be different.")
+    try:
+        return run_betting_analysis(
+            request.league_id,
+            request.season,
+            request.home_team.strip(),
+            request.away_team.strip(),
+            request.model,
+            train_pct=request.train_pct,
+            xi=request.xi,
+            force_refresh=request.force_refresh,
+            duckdb_path=request.duckdb_path,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - runtime API protection
+        raise HTTPException(status_code=500, detail=f"Failed to run betting analysis: {exc}") from exc
 
 
 @app.post("/chat", response_model=ChatResponse)

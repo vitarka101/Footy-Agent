@@ -259,9 +259,21 @@ body.landing-page .app-shell {
   min-height: 0;
 }
 
+.hidden-view {
+  display: none;
+}
+
+.embedded-standings-view {
+  min-height: calc(100vh - 132px);
+}
+
 .analysis-stream {
   min-height: 0;
   padding-right: 430px;
+}
+
+body.landing-page.standings-mode .analysis-stream {
+  padding-right: 0;
 }
 
 .analysis-content-page {
@@ -488,12 +500,48 @@ body.landing-page .app-shell {
 .analysis-empty,
 .analysis-header-card,
 .analysis-answer-card,
-.analysis-question-block {
+.analysis-question-block,
+.analysis-hero-card,
+.analysis-summary-card,
+.analysis-section-card {
   border: 1px solid rgba(150, 226, 255, 0.1);
   border-radius: 18px;
   background: rgba(7, 28, 38, 0.88);
   padding: 16px;
   margin-bottom: 12px;
+}
+
+.analysis-hero-card {
+  background:
+    radial-gradient(circle at top right, rgba(74, 217, 198, 0.14), transparent 34%),
+    linear-gradient(180deg, rgba(8, 37, 49, 0.96), rgba(5, 24, 33, 0.92));
+  padding: 22px;
+}
+
+.analysis-hero-card h2 {
+  margin: 8px 0 0;
+  font-family: "Sora", sans-serif;
+  font-size: clamp(1.6rem, 2.5vw, 2.35rem);
+  line-height: 1.06;
+  letter-spacing: -0.05em;
+  max-width: 18ch;
+}
+
+.analysis-summary-card {
+  background: linear-gradient(180deg, rgba(8, 32, 44, 0.96), rgba(6, 24, 33, 0.92));
+}
+
+.executive-summary-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 10px;
+  color: var(--text-1);
+  line-height: 1.65;
+}
+
+.executive-summary-list li strong {
+  color: var(--text-0);
 }
 
 .prompt-chips,
@@ -519,8 +567,9 @@ body.landing-page .app-shell {
 .chat-shell {
   flex: 1;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 210px) minmax(120px, 1fr) auto;
+  gap: 12px;
   border-radius: var(--radius-xl);
   padding: 16px;
   background: rgba(4, 17, 24, 0.78);
@@ -531,10 +580,11 @@ body.landing-page .app-shell {
   position: fixed;
   right: 24px;
   top: 110px;
-  width: 390px;
-  max-height: calc(100vh - 136px);
+  width: min(380px, calc(100vw - 36px));
+  max-height: calc(100vh - 132px);
   z-index: 12;
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
 }
 
 .chat-rail-head {
@@ -552,7 +602,9 @@ body.landing-page .app-shell {
 }
 
 .chat-examples {
-  margin-bottom: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .prompt-chips-rail {
@@ -563,22 +615,24 @@ body.landing-page .app-shell {
 .prompt-chips-rail .prompt-chip {
   width: 100%;
   text-align: left;
+  padding: 12px 16px;
+  line-height: 1.35;
+  font-size: 0.96rem;
 }
 
 .chat-log {
-  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   overflow-y: auto;
   padding-right: 6px;
 }
 
 .chat-history {
   border-radius: 18px;
-  padding: 8px 4px 8px 0;
-  min-height: 140px;
+  padding: 4px 4px 6px 0;
+  min-height: 120px;
 }
 
 .chat-history .message,
@@ -680,6 +734,8 @@ body.landing-page .app-shell {
   margin-top: 8px;
   line-height: 1.72;
   color: var(--text-0);
+  font-size: 1.02rem;
+  max-width: 72ch;
 }
 
 .standings-pulse {
@@ -714,7 +770,8 @@ body.landing-page .app-shell {
 }
 
 .message-highlights {
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-bottom: 12px;
 }
 
 .highlight-value {
@@ -725,10 +782,10 @@ body.landing-page .app-shell {
 }
 
 .message-table {
-  margin-top: 12px;
   overflow-x: auto;
   border: 1px solid rgba(150, 226, 255, 0.1);
   border-radius: 14px;
+  margin-top: 10px;
 }
 
 .message-table table {
@@ -762,6 +819,10 @@ body.landing-page .app-shell {
   padding: 14px;
 }
 
+.source-card {
+  background: linear-gradient(180deg, rgba(8, 28, 38, 0.96), rgba(6, 22, 31, 0.92));
+}
+
 .hypothesis-card h4,
 .chart-card h4 {
   margin: 6px 0 8px;
@@ -790,10 +851,35 @@ body.landing-page .app-shell {
   margin-top: 6px;
 }
 
+.hypothesis-candidate-stack {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.hypothesis-candidate {
+  border: 1px solid rgba(150, 226, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(10, 33, 45, 0.82);
+  padding: 12px;
+}
+
+.hypothesis-candidate .highlight-value {
+  margin-top: 6px;
+}
+
+.hypothesis-candidate p {
+  margin-top: 8px;
+}
+
 .chart-stack {
   display: grid;
   gap: 12px;
   margin-top: 12px;
+}
+
+.chart-stack .chart-card:first-child {
+  margin-top: 0;
 }
 
 .chart-card-head {
@@ -906,7 +992,12 @@ body.landing-page .app-shell {
 }
 
 .chat-form {
-  margin-top: 12px;
+  margin-top: 0;
+  position: sticky;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(4, 17, 24, 0), rgba(4, 17, 24, 0.92) 24%, rgba(4, 17, 24, 0.98) 100%);
+  padding-top: 10px;
+  z-index: 2;
 }
 
 .chat-label {
@@ -920,13 +1011,13 @@ body.landing-page .app-shell {
 
 .chat-input-stack {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 #chat-input {
   width: 100%;
-  min-height: 112px;
-  max-height: 180px;
+  min-height: 96px;
+  max-height: 150px;
   resize: vertical;
   border: 1px solid rgba(151, 228, 255, 0.14);
   border-radius: 18px;

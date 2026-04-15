@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Footy Agent Betting Room</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Instrument+Serif&family=JetBrains+Mono:wght@400;600;700&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/betting_room.css" />
+</head>
+
+<body class="landing-page betting-room-page">
+  <div class="betting-shell">
+    <header class="betting-hero">
+      <div>
+        <p class="betting-kicker">Betting Room</p>
+        <h1>Poisson Match Lab</h1>
+        <p class="betting-subtitle">
+          A standalone betting analysis page powered by runtime football-data collection,
+          repo-derived Poisson-family models, and tool-traced match hypothesis generation.
+        </p>
+      </div>
+      <div class="betting-hero-actions">
+        <a class="betting-link" href="/">Analyst Desk</a>
+        <a class="betting-link" href="/standings-page">Standings</a>
+      </div>
+    </header>
+
+    <main class="betting-layout">
+      <section class="betting-panel betting-controls-panel">
+        <div class="betting-panel-head">
+          <div>
+            <p class="betting-panel-eyebrow">Runtime Controls</p>
+            <h2>Fixture Setup</h2>
+          </div>
+          <button id="betting-refresh" class="betting-refresh" type="button">Refresh Source Data</button>
+        </div>
+
+        <div class="betting-grid betting-grid-two">
+          <label class="betting-field">
+            <span>League</span>
+            <select id="betting-league"></select>
+          </label>
+          <label class="betting-field">
+            <span>Season</span>
+            <select id="betting-season"></select>
+          </label>
+          <label class="betting-field">
+            <span>Model</span>
+            <select id="betting-model"></select>
+          </label>
+          <label class="betting-field">
+            <span>Training Split</span>
+            <input id="betting-train-pct" type="range" min="0.3" max="1" step="0.1" value="0.7" />
+            <div id="betting-train-pct-label" class="betting-range-label">70%</div>
+          </label>
+          <label class="betting-field">
+            <span>Home Team</span>
+            <select id="betting-home-team"></select>
+          </label>
+          <label class="betting-field">
+            <span>Away Team</span>
+            <select id="betting-away-team"></select>
+          </label>
+        </div>
+
+        <div class="betting-actions">
+          <button id="betting-analyze" class="betting-primary" type="button">Calculate Probabilities</button>
+          <button id="betting-simulate" class="betting-secondary" type="button" disabled>Use Latest Analysis</button>
+        </div>
+
+        <p id="betting-source-summary" class="betting-source-summary"></p>
+      </section>
+
+      <section class="betting-grid betting-grid-main">
+        <article class="betting-panel betting-score-panel">
+          <div class="betting-score-strip">
+            <div class="betting-score-block">
+              <div class="betting-score-label">Actual Result</div>
+              <div id="betting-actual-result" class="betting-score-value">Awaiting fixture selection</div>
+            </div>
+            <div class="betting-score-block betting-score-block-accent">
+              <div class="betting-score-label">Simulated Result</div>
+              <div id="betting-simulated-result" class="betting-score-value">Run the analyst first</div>
+            </div>
+          </div>
+        </article>
+
+        <article class="betting-panel">
+          <div class="betting-panel-head">
+            <div>
+              <p class="betting-panel-eyebrow">Probabilities</p>
+              <h2 id="betting-fixture-title">Fixture Forecast</h2>
+            </div>
+            <div id="betting-runtime-badge" class="tool-tag">Waiting for analysis</div>
+          </div>
+          <div id="betting-probabilities" class="betting-probability-bars"></div>
+          <div class="betting-stat-row">
+            <div class="betting-stat-card">
+              <span>Expected Goals</span>
+              <strong id="betting-home-xg">-</strong>
+              <small id="betting-home-team-label">Home</small>
+            </div>
+            <div class="betting-stat-card">
+              <span>Most Likely Score</span>
+              <strong id="betting-most-likely-score">-</strong>
+              <small id="betting-most-likely-probability">-</small>
+            </div>
+            <div class="betting-stat-card">
+              <span>Expected Goals</span>
+              <strong id="betting-away-xg">-</strong>
+              <small id="betting-away-team-label">Away</small>
+            </div>
+          </div>
+        </article>
+
+        <article class="betting-panel">
+          <div class="betting-panel-head">
+            <div>
+              <p class="betting-panel-eyebrow">Score Matrix</p>
+              <h2>Exact Score Heatmap</h2>
+            </div>
+          </div>
+          <div id="betting-score-matrix" class="betting-matrix-wrap"></div>
+        </article>
+
+        <article class="betting-panel">
+          <div class="betting-panel-head">
+            <div>
+              <p class="betting-panel-eyebrow">Hypothesis</p>
+              <h2>Betting Thesis</h2>
+            </div>
+          </div>
+          <div id="betting-hypothesis" class="betting-hypothesis"></div>
+        </article>
+
+        <article class="betting-panel">
+          <div class="betting-panel-head">
+            <div>
+              <p class="betting-panel-eyebrow">EDA Tests</p>
+              <h2>Model Assumption Checks</h2>
+            </div>
+          </div>
+          <div id="betting-tests" class="betting-tests"></div>
+        </article>
+
+        <article class="betting-panel">
+          <div class="betting-panel-head">
+            <div>
+              <p class="betting-panel-eyebrow">League Context</p>
+              <h2>Predicted vs Actual Table</h2>
+            </div>
+          </div>
+          <div class="betting-table-grid">
+            <div>
+              <h3 class="betting-mini-title">Predicted Table</h3>
+              <div id="betting-predicted-table"></div>
+            </div>
+            <div>
+              <h3 class="betting-mini-title">Actual Table</h3>
+              <div id="betting-actual-table"></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="betting-panel">
+          <div class="betting-panel-head">
+            <div>
+              <p class="betting-panel-eyebrow">Tool Trace</p>
+              <h2>Actual Backend Tool Calls</h2>
+            </div>
+          </div>
+          <div id="betting-tools" class="betting-tools"></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/betting_room.js" type="module"></script>
+</body>
+
+</html>

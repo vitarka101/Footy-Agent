@@ -1,17 +1,22 @@
 const state = {
   dashboard: null,
+  standings: null,
   messages: [],
   activeAnalysisIndex: -1,
+  currentView: "analyst",
   loading: false,
   refreshing: false,
 };
 
 const elements = {
+  navAnalystDesk: document.getElementById("nav-analyst-desk"),
+  navStandings: document.getElementById("nav-standings"),
+  analystView: document.getElementById("analyst-view"),
+  standingsView: document.getElementById("standings-view"),
+  chatRail: document.getElementById("chat-rail"),
   heroEyebrow: document.getElementById("hero-eyebrow"),
   heroTitle: document.getElementById("hero-title"),
   heroDescription: document.getElementById("hero-description"),
-  runtimeProviderPill: document.getElementById("runtime-provider-pill"),
-  runtimeModelPill: document.getElementById("runtime-model-pill"),
   metricGrid: document.getElementById("metric-grid"),
   leagueSnapshot: document.getElementById("league-snapshot"),
   promptChips: document.getElementById("prompt-chips"),
@@ -20,6 +25,14 @@ const elements = {
   chatForm: document.getElementById("chat-form"),
   chatInput: document.getElementById("chat-input"),
   sendButton: document.getElementById("send-button"),
+  standingsPulseTitle: document.getElementById("standings-pulse-title"),
+  standingsPulseSummary: document.getElementById("standings-pulse-summary"),
+  standingsPulseGrid: document.getElementById("standings-pulse-grid"),
+  standingsTitle: document.getElementById("standings-title"),
+  standingsSeasonBadge: document.getElementById("standings-season-badge"),
+  standingsCountry: document.getElementById("standings-country"),
+  standingsLeague: document.getElementById("standings-league"),
+  standingsTable: document.getElementById("standings-table"),
   refreshDataButton: document.getElementById("refresh-data-button"),
   refreshStatusBadge: document.getElementById("refresh-status-badge"),
 };
@@ -31,6 +44,15 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function formatInlineRichText(value) {
+  const escaped = escapeHtml(value);
+  return escaped.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+}
+
+function stripMarkdown(value) {
+  return String(value || "").replace(/\*\*(.+?)\*\*/g, "$1").trim();
 }
 
 function formatDecimal(value, digits = 1, fallback = "--") {
@@ -117,16 +139,44 @@ function renderHighlights(highlights = []) {
 function renderHypothesis(hypothesis) {
   if (!hypothesis || !hypothesis.statement) return "";
   const evidence = (hypothesis.evidence || [])
+    .slice(0, 2)
     .map((item) => `<li>${escapeHtml(item)}</li>`)
     .join("");
+  const candidates = (hypothesis.candidates || [])
+    .slice(0, 2)
+    .map(
+      (item, index) => `
+        <article class="hypothesis-candidate">
+          <div class="metric-card-label">Candidate ${index + 1} · ${escapeHtml(item.confidence || "Confidence not set")}</div>
+          <div class="highlight-value">${escapeHtml(item.title || "Ranked explanation")}</div>
+          <p>${escapeHtml(item.statement || "")}</p>
+          ${item.caveats?.length ? `<p><strong>Caveat:</strong> ${escapeHtml(item.caveats[0])}</p>` : ""}
+        </article>
+      `,
+    )
+    .join("");
+  const footer = [
+    hypothesis.correlation_note ? `<p><strong>Correlation vs causation:</strong> ${escapeHtml(hypothesis.correlation_note)}</p>` : "",
+    hypothesis.confidence ? `<p><strong>Overall confidence:</strong> ${escapeHtml(hypothesis.confidence)}</p>` : "",
+    hypothesis.next_checks?.length ? `<p><strong>Next check:</strong> ${escapeHtml(hypothesis.next_checks[0])}</p>` : "",
+  ].join("");
   return `
     <section class="hypothesis-card">
       <div class="section-kicker">Hypothesis</div>
       <h4>${escapeHtml(hypothesis.title || "Data-backed hypothesis")}</h4>
       <p>${escapeHtml(hypothesis.statement)}</p>
       ${evidence ? `<ul class="hypothesis-evidence">${evidence}</ul>` : ""}
+      ${candidates ? `<div class="hypothesis-candidate-stack">${candidates}</div>` : ""}
+      ${footer}
     </section>
   `;
+}
+
+function renderExecutiveSummary(points = [], fallbackText = "") {
+  const items = points.length
+    ? points.map((point) => `<li>${formatInlineRichText(point)}</li>`).join("")
+    : `<li>${formatInlineRichText(fallbackText)}</li>`;
+  return `<ul class="executive-summary-list">${items}</ul>`;
 }
 
 function normalizeSeriesData(series = []) {
@@ -397,6 +447,7 @@ function renderMessageSuggestions(suggestions = []) {
 function renderSources(sources = []) {
   if (!sources.length) return "";
   const items = sources
+    .slice(0, 3)
     .map((source) => {
       const title = escapeHtml(source.title || "Source");
       const snippet = escapeHtml(source.snippet || "");
@@ -415,10 +466,15 @@ function renderSources(sources = []) {
     .join("");
   return `
     <section class="source-card">
-      <div class="section-kicker">Sources</div>
+      <div class="section-kicker">External Validation Links</div>
       <ul class="source-list">${items}</ul>
     </section>
   `;
+}
+
+function titleFromQuestion(question, fallback = "Football analyst result") {
+  const value = String(question || "").trim();
+  return value || fallback;
 }
 
 function previewText(text, limit = 150) {
@@ -435,6 +491,124 @@ function loadingMarkup() {
       <span></span>
     </div>
   `;
+}
+
+function resultBadge(result) {
+  const normalized = String(result || "").toUpperCase();
+  const labelMap = { W: "Win", D: "Draw", L: "Loss" };
+  return `
+    <span class="form-pill form-pill-${normalized.toLowerCase()}" title="${escapeHtml(labelMap[normalized] || normalized)}">
+      ${escapeHtml(normalized)}
+    </span>
+  `;
+}
+
+function setActiveView(viewName) {
+  state.currentView = viewName;
+  elements.analystView?.classList.toggle("hidden-view", viewName !== "analyst");
+  elements.standingsView?.classList.toggle("hidden-view", viewName !== "standings");
+  elements.navAnalystDesk?.classList.toggle("pill-active", viewName === "analyst");
+  elements.navStandings?.classList.toggle("pill-active", viewName === "standings");
+  elements.chatRail?.classList.toggle("hidden-view", viewName === "standings");
+  document.body.classList.toggle("standings-mode", viewName === "standings");
+}
+
+function renderStandingsPulse(pulse) {
+  if (!elements.standingsPulseGrid) return;
+  elements.standingsPulseTitle.textContent = pulse?.title || "League Pulse";
+  elements.standingsPulseSummary.textContent = pulse?.summary || "";
+  elements.standingsPulseGrid.innerHTML = (pulse?.metrics || [])
+    .map(
+      (item) => `
+        <article class="metric-card standings-pulse-card">
+          <div class="metric-card-label">${escapeHtml(item.label)}</div>
+          <div class="metric-card-value">${escapeHtml(item.value)}</div>
+          <div class="metric-card-caption">${escapeHtml(item.caption)}</div>
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function renderStandings(payload) {
+  if (!elements.standingsTable) return;
+  state.standings = payload;
+  renderStandingsPulse(payload.pulse);
+  elements.standingsTitle.textContent = `${payload.selected_country} · ${payload.selected_league}`;
+  elements.standingsSeasonBadge.textContent = payload.selected_season;
+
+  elements.standingsCountry.innerHTML = payload.country_options
+    .map(
+      (country) =>
+        `<option value="${escapeHtml(country)}"${country === payload.selected_country ? " selected" : ""}>${escapeHtml(country)}</option>`,
+    )
+    .join("");
+
+  elements.standingsLeague.innerHTML = payload.league_options
+    .map(
+      (league) =>
+        `<option value="${escapeHtml(league)}"${league === payload.selected_league ? " selected" : ""}>${escapeHtml(league)}</option>`,
+    )
+    .join("");
+
+  if (!payload.rows.length) {
+    elements.standingsTable.innerHTML = `<div class="standings-empty">No completed match data available yet for this selection.</div>`;
+    return;
+  }
+
+  const body = payload.rows
+    .map(
+      (row) => `
+        <tr>
+          <td>${escapeHtml(row.rank)}</td>
+          <td class="standings-club">${escapeHtml(row.club)}</td>
+          <td>${escapeHtml(row.mp)}</td>
+          <td>${escapeHtml(row.w)}</td>
+          <td>${escapeHtml(row.d)}</td>
+          <td>${escapeHtml(row.l)}</td>
+          <td>${escapeHtml(row.gf)}</td>
+          <td>${escapeHtml(row.ga)}</td>
+          <td>${escapeHtml(row.gd)}</td>
+          <td>${escapeHtml(row.pts)}</td>
+          <td><div class="form-strip">${row.last5.map(resultBadge).join("")}</div></td>
+        </tr>
+      `,
+    )
+    .join("");
+
+  elements.standingsTable.innerHTML = `
+    <table class="standings-table">
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Club</th>
+          <th>MP</th>
+          <th>W</th>
+          <th>D</th>
+          <th>L</th>
+          <th>GF</th>
+          <th>GA</th>
+          <th>GD</th>
+          <th>Pts</th>
+          <th>Last 5</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>
+  `;
+}
+
+async function loadStandings(country = "", league = "") {
+  const params = new URLSearchParams();
+  if (country) params.set("country", country);
+  if (league) params.set("league", league);
+
+  const response = await fetch(`/standings?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error("Failed to load standings.");
+  }
+
+  renderStandings(await response.json());
 }
 
 function activeAnalysisMessage() {
@@ -460,59 +634,87 @@ function renderAnalysisCanvas() {
     return;
   }
 
-  const questionBlock = message.question
+  const title = titleFromQuestion(message.question);
+  const metaChips = (message.isConversational || message.isSimpleResponse)
+    ? ""
+    : [
+        message.scope ? `<span class="analysis-chip">${escapeHtml(message.scope)}</span>` : "",
+        message.dataMode && message.dataMode !== "none" ? `<span class="analysis-chip">${escapeHtml(message.dataMode.replaceAll("_", " "))}</span>` : "",
+        message.provider ? `<span class="analysis-chip">${escapeHtml(message.provider)}</span>` : "",
+      ]
+        .filter(Boolean)
+        .join("");
+
+  const supportingTable = message.table
     ? `
-      <div class="analysis-question-block">
-        <div class="section-kicker">Question</div>
-        <h3>${escapeHtml(message.question)}</h3>
-        <div class="analysis-meta-row">
-          ${message.scope ? `<span class="analysis-chip">${escapeHtml(message.scope)}</span>` : ""}
-          ${message.dataMode ? `<span class="analysis-chip">${escapeHtml(message.dataMode.replaceAll("_", " "))}</span>` : ""}
-        </div>
-      </div>
+      <section class="analysis-section-card">
+        <div class="section-kicker">Supporting Table</div>
+        ${renderTable(message.table)}
+      </section>
     `
     : "";
 
-  elements.analysisContent.innerHTML = `
-    <div class="analysis-header-card">
-      <div>
-        <p class="section-kicker">Full analysis</p>
-        <h2>${escapeHtml(message.outOfContext ? "Out-of-context handling" : "Football analyst result")}</h2>
-      </div>
-      ${message.provider ? `<div class="tool-tag">${escapeHtml(message.provider)}</div>` : ""}
-    </div>
-    ${questionBlock}
-    <section class="analysis-answer-card">
-      <div class="section-kicker">Answer</div>
-      <div class="analysis-answer-text">${message.loading ? loadingMarkup() : escapeHtml(message.text)}</div>
-    </section>
-    ${message.loading ? "" : renderToolCalls(message.toolCalls)}
+  const minimalResponse = message.outOfContext || message.isConversational || message.isSimpleResponse;
+  const outOfContextExtras = minimalResponse
+    ? ""
+    : `
     ${message.loading ? "" : renderHighlights(message.highlights)}
     ${message.loading ? "" : renderHypothesis(message.hypothesis)}
     ${message.loading ? "" : renderCharts(message.charts)}
-    ${message.loading ? "" : renderTable(message.table)}
+    ${message.loading ? "" : supportingTable}
     ${message.loading ? "" : renderSources(message.sources)}
     ${message.loading ? "" : renderMessageSuggestions(message.suggestions)}
+  `;
+
+  const simpleBody = (message.isConversational || message.isSimpleResponse)
+    ? `
+    <section class="analysis-section-card">
+      <div class="section-kicker">${escapeHtml(message.isConversational ? "Reply" : "Answer")}</div>
+      <div class="analysis-answer-text">${escapeHtml(message.text)}</div>
+      ${message.suggestions?.length ? renderMessageSuggestions(message.suggestions) : ""}
+    </section>
+  `
+    : "";
+
+  const standardSummary = (message.isConversational || message.isSimpleResponse)
+    ? ""
+    : `
+    <section class="analysis-summary-card">
+      <div class="section-kicker">Executive Summary</div>
+      <div class="analysis-answer-text">
+        ${message.loading ? loadingMarkup() : renderExecutiveSummary(message.executiveSummary, message.text)}
+      </div>
+    </section>
+  `;
+
+  elements.analysisContent.innerHTML = `
+    <section class="analysis-hero-card">
+      <div>
+        <p class="section-kicker">${escapeHtml(message.isConversational ? "Conversation" : (message.isSimpleResponse ? "Football knowledge" : (message.outOfContext ? "Out of context" : "Curated result")))}</p>
+        <h2>${escapeHtml(title)}</h2>
+        <div class="analysis-meta-row">${metaChips}</div>
+      </div>
+    </section>
+    ${standardSummary}
+    ${simpleBody}
+    ${outOfContextExtras}
   `;
 }
 
 function renderMessages() {
-  elements.chatLog.innerHTML = state.messages
+  const visibleMessages = state.messages.filter((message) => message.role === "user" || message.loading);
+  elements.chatLog.innerHTML = visibleMessages
     .map((message, index) => {
-      const content = message.loading ? "Running analysis..." : previewText(message.role === "user" ? message.text : message.question || message.text);
-      const secondary = message.role === "assistant"
-        ? previewText(message.text, 90)
-        : (message.loading ? "Fetching data and running EDA" : "Queued");
-      const activeClass = index === state.activeAnalysisIndex ? "active" : "";
-      const metaPill = message.role === "assistant" && message.dataMode
-        ? `<span class="history-pill">${escapeHtml(message.dataMode.replaceAll("_", " "))}</span>`
-        : "";
+      const content = message.loading
+        ? "Running analysis..."
+        : previewText(message.text, 110);
+      const secondary = message.loading ? "Preparing result on the left" : "Submitted";
+      const activeClass = message.loading ? "active" : "";
       return `
-        <article class="message history-message ${escapeHtml(message.role)} ${activeClass}" data-message-index="${index}">
+        <article class="message history-message ${escapeHtml(message.role)} ${activeClass}">
           <div class="message-bubble">
             <div class="message-meta">
-              <div class="message-role">${escapeHtml(message.role === "assistant" ? "Analyst" : "You")}</div>
-              ${metaPill}
+              <div class="message-role">${escapeHtml(message.loading ? "Running" : "You")}</div>
             </div>
             <div class="message-body">${content}</div>
             <div class="history-secondary">${escapeHtml(secondary)}</div>
@@ -557,35 +759,12 @@ async function loadDashboard() {
   state.dashboard = payload;
 
   elements.heroEyebrow.textContent = "Analyst desk";
-  elements.heroTitle.textContent = "Latest result canvas";
-  elements.heroDescription.textContent = "Run a question on the right. The full answer, EDA charts, table, and sources open in the main panel.";
-
-  if (payload.runtime) {
-    elements.runtimeProviderPill.lastElementChild.textContent = payload.runtime.provider;
-    elements.runtimeModelPill.textContent = payload.runtime.model;
-  }
+  elements.heroTitle.textContent = "Latest result";
+  elements.heroDescription.textContent = "Answer, charts, and sources.";
 
   renderMetricCards(payload.metrics);
   renderLeagueSnapshot(payload.league_snapshot);
   renderPromptChips(payload.prompt_chips);
-
-  if (!state.messages.length) {
-    pushMessage({
-      role: payload.welcome_message.role,
-      text: payload.welcome_message.text,
-      toolCalls: payload.welcome_message.tool_calls,
-      highlights: payload.welcome_message.highlights,
-      hypothesis: null,
-      charts: [],
-      table: null,
-      sources: [],
-      question: "What can this analyst do?",
-      scope: "full warehouse",
-      dataMode: "warehouse",
-      outOfContext: false,
-      suggestions: payload.welcome_message.suggested_prompts,
-    });
-  }
 }
 
 async function sendMessage(message) {
@@ -631,6 +810,7 @@ async function handleChatSubmit(event) {
     charts: [],
     table: null,
     sources: [],
+    executiveSummary: [],
     suggestions: [],
   });
   pushMessage({
@@ -644,6 +824,7 @@ async function handleChatSubmit(event) {
     charts: [],
     table: null,
     sources: [],
+    executiveSummary: [],
     scope: "",
     dataMode: "running",
     outOfContext: false,
@@ -658,6 +839,7 @@ async function handleChatSubmit(event) {
     replaceLoadingMessage({
       role: "assistant",
       text: payload.answer,
+      executiveSummary: payload.executive_summary || [],
       question: value,
       toolCalls: [
         ...(payload.tool_calls || []),
@@ -673,6 +855,8 @@ async function handleChatSubmit(event) {
       scope: payload.scope,
       dataMode: payload.data_mode,
       outOfContext: payload.out_of_context,
+      isConversational: payload.is_conversational,
+      isSimpleResponse: payload.is_simple_response,
       provider: payload.provider,
       suggestions: payload.suggested_prompts,
     });
@@ -680,6 +864,7 @@ async function handleChatSubmit(event) {
     replaceLoadingMessage({
       role: "assistant",
       text: error.message,
+      executiveSummary: [],
       question: value,
       toolCalls: [],
       highlights: [],
@@ -690,6 +875,8 @@ async function handleChatSubmit(event) {
       scope: "",
       dataMode: "error",
       outOfContext: false,
+      isConversational: false,
+      isSimpleResponse: false,
       provider: "",
       suggestions: state.dashboard?.prompt_chips || [],
     });
@@ -755,10 +942,37 @@ async function refreshData() {
 
     const payload = await response.json();
     await loadDashboard();
+    if (state.currentView === "standings" || state.standings) {
+      await loadStandings(state.standings?.selected_country || "", state.standings?.selected_league || "");
+    }
     setRefreshState(false, payload.detail);
   } catch (error) {
     setRefreshState(false, error.message);
   }
+}
+
+async function handleStandingsCountryChange() {
+  await loadStandings(elements.standingsCountry.value, "");
+}
+
+async function handleStandingsLeagueChange() {
+  await loadStandings(elements.standingsCountry.value, elements.standingsLeague.value);
+}
+
+async function handleStandingsView() {
+  setActiveView("standings");
+  if (!state.standings) {
+    elements.standingsTable.innerHTML = `<div class="standings-empty">Loading standings...</div>`;
+    try {
+      await loadStandings();
+    } catch (error) {
+      elements.standingsTable.innerHTML = `<div class="standings-empty">${escapeHtml(error.message)}</div>`;
+    }
+  }
+}
+
+function handleAnalystView() {
+  setActiveView("analyst");
 }
 
 function handleInitialLoadError(error) {
@@ -776,6 +990,10 @@ function handleInitialLoadError(error) {
 async function boot() {
   elements.chatForm.addEventListener("submit", handleChatSubmit);
   elements.refreshDataButton.addEventListener("click", refreshData);
+  elements.navAnalystDesk?.addEventListener("click", handleAnalystView);
+  elements.navStandings?.addEventListener("click", handleStandingsView);
+  elements.standingsCountry?.addEventListener("change", handleStandingsCountryChange);
+  elements.standingsLeague?.addEventListener("change", handleStandingsLeagueChange);
   document.addEventListener("click", delegatePromptClicks);
   elements.chatLog.addEventListener("click", delegateHistoryClicks);
 
@@ -786,6 +1004,7 @@ async function boot() {
   }
 
   renderAnalysisCanvas();
+  setActiveView("analyst");
 }
 
 boot();

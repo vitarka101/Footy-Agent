@@ -1,0 +1,466 @@
+.betting-room-page {
+  background:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.12), transparent 32%),
+    radial-gradient(circle at top right, rgba(244, 114, 182, 0.12), transparent 28%),
+    #08101d;
+  color: #e2e8f0;
+  min-height: 100vh;
+}
+
+.betting-shell {
+  max-width: 1380px;
+  margin: 0 auto;
+  padding: 20px 24px 28px;
+}
+
+.betting-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.betting-kicker,
+.betting-panel-eyebrow {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #22d3ee;
+}
+
+.betting-hero h1,
+.betting-panel h2 {
+  margin: 0;
+  font-family: "Instrument Serif", serif;
+  font-weight: 400;
+}
+
+.betting-hero h1 {
+  font-size: clamp(2rem, 4vw, 3rem);
+  line-height: 0.98;
+}
+
+.betting-subtitle {
+  max-width: 700px;
+  margin: 8px 0 0;
+  color: #8aa0ba;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.betting-hero-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.betting-link {
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(138, 160, 186, 0.25);
+  color: #d7e2ef;
+  text-decoration: none;
+  background: rgba(10, 15, 26, 0.68);
+}
+
+.betting-layout {
+  display: grid;
+  gap: 16px;
+}
+
+.betting-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.betting-grid-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.betting-grid-main {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.betting-panel {
+  background: linear-gradient(180deg, rgba(17, 24, 39, 0.95), rgba(10, 16, 29, 0.95));
+  border: 1px solid rgba(69, 88, 113, 0.45);
+  border-radius: 18px;
+  padding: 18px 20px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.2);
+}
+
+.betting-controls-panel {
+  position: static;
+}
+
+.betting-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.betting-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.betting-field span {
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7e93ad;
+}
+
+.betting-field select,
+.betting-field input[type="range"] {
+  width: 100%;
+}
+
+.betting-field select {
+  appearance: none;
+  background: rgba(9, 14, 27, 0.95);
+  border: 1px solid rgba(69, 88, 113, 0.48);
+  border-radius: 12px;
+  color: #e2e8f0;
+  padding: 11px 14px;
+  font-size: 0.95rem;
+}
+
+.betting-range-label {
+  font-family: "JetBrains Mono", monospace;
+  color: #22d3ee;
+}
+
+.betting-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.betting-primary,
+.betting-secondary,
+.betting-refresh {
+  border-radius: 12px;
+  padding: 11px 16px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+}
+
+.betting-primary {
+  background: linear-gradient(135deg, #22d3ee, #0ea5c7);
+  color: #08101d;
+}
+
+.betting-secondary {
+  background: rgba(167, 139, 250, 0.12);
+  color: #d7c4ff;
+  border: 1px solid rgba(167, 139, 250, 0.4);
+}
+
+.betting-refresh {
+  background: rgba(52, 211, 153, 0.12);
+  color: #86efac;
+  border: 1px solid rgba(52, 211, 153, 0.35);
+}
+
+.betting-source-summary {
+  margin: 12px 0 0;
+  color: #8aa0ba;
+  font-size: 0.9rem;
+}
+
+.betting-score-panel {
+  grid-column: 1 / -1;
+}
+
+.betting-score-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.betting-score-block {
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: rgba(10, 19, 35, 0.78);
+  border: 1px solid rgba(69, 88, 113, 0.35);
+}
+
+.betting-score-block-accent {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.11), rgba(167, 139, 250, 0.11));
+}
+
+.betting-score-label {
+  margin-bottom: 6px;
+  font-size: 0.76rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #7e93ad;
+}
+
+.betting-score-value {
+  font-family: "JetBrains Mono", monospace;
+  font-size: clamp(1rem, 2vw, 1.45rem);
+  font-weight: 700;
+}
+
+.betting-probability-bars {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.betting-probability-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 148px;
+  border-radius: 14px;
+  padding: 14px;
+  background: rgba(9, 14, 27, 0.9);
+  border: 1px solid rgba(69, 88, 113, 0.3);
+}
+
+.betting-probability-fill {
+  width: 100%;
+  border-radius: 10px 10px 2px 2px;
+  min-height: 16px;
+}
+
+.betting-probability-card strong {
+  font-size: 1.55rem;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.betting-probability-card span {
+  color: #8aa0ba;
+  font-size: 0.9rem;
+}
+
+.betting-probability-card-home .betting-probability-fill,
+.betting-probability-card-home strong {
+  background-color: #22d3ee;
+  color: #22d3ee;
+}
+
+.betting-probability-card-draw .betting-probability-fill,
+.betting-probability-card-draw strong {
+  background-color: #a78bfa;
+  color: #a78bfa;
+}
+
+.betting-probability-card-away .betting-probability-fill,
+.betting-probability-card-away strong {
+  background-color: #f472b6;
+  color: #f472b6;
+}
+
+.betting-stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.betting-stat-card {
+  border-top: 1px solid rgba(69, 88, 113, 0.35);
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: center;
+}
+
+.betting-stat-card span,
+.betting-stat-card small,
+.betting-mini-title,
+.betting-confidence {
+  color: #7e93ad;
+}
+
+.betting-stat-card strong {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 1.25rem;
+}
+
+.betting-matrix-wrap {
+  overflow-x: auto;
+}
+
+.betting-matrix {
+  display: grid;
+  grid-template-columns: 52px repeat(9, 46px);
+  gap: 3px;
+}
+
+.betting-matrix-header,
+.betting-matrix-cell {
+  border-radius: 6px;
+  padding: 8px 4px;
+  text-align: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+}
+
+.betting-matrix-header {
+  background: rgba(10, 19, 35, 0.9);
+  color: #22d3ee;
+}
+
+.betting-matrix-header-corner {
+  color: #7e93ad;
+}
+
+.betting-matrix-cell {
+  background: rgba(9, 14, 27, 0.88);
+  color: #d7e2ef;
+}
+
+.betting-matrix-cell-home {
+  background: rgba(34, 211, 238, 0.28);
+}
+
+.betting-matrix-cell-draw {
+  background: rgba(167, 139, 250, 0.28);
+}
+
+.betting-matrix-cell-away {
+  background: rgba(244, 114, 182, 0.28);
+}
+
+.betting-hypothesis h3 {
+  margin: 2px 0 6px;
+  font-size: 1.35rem;
+}
+
+.betting-hypothesis-statement {
+  font-size: 0.96rem;
+  line-height: 1.55;
+  color: #d7e2ef;
+}
+
+.betting-hypothesis-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.betting-hypothesis-grid h4 {
+  margin: 0 0 8px;
+}
+
+.betting-hypothesis-grid ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #9eb2c9;
+  line-height: 1.5;
+  font-size: 0.9rem;
+}
+
+.betting-tests,
+.betting-tools {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.betting-test-card,
+.betting-tool-card {
+  background: rgba(9, 14, 27, 0.9);
+  border: 1px solid rgba(69, 88, 113, 0.3);
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.betting-test-card h4,
+.betting-tool-card strong {
+  margin: 0 0 10px;
+}
+
+.betting-test-card p,
+.betting-tool-card p,
+.betting-tool-card small {
+  color: #9eb2c9;
+  font-size: 0.88rem;
+}
+
+.betting-tool-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.betting-tool-head span {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.76rem;
+  color: #22d3ee;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.betting-table-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.betting-table-grid > div {
+  min-width: 0;
+}
+
+.betting-table-grid .standings-table-wrap,
+.betting-table-grid > div > div {
+  overflow-x: auto;
+}
+
+.betting-table-grid .standings-table {
+  min-width: 720px;
+}
+
+.betting-table-grid .standings-table th,
+.betting-table-grid .standings-table td {
+  white-space: nowrap;
+  font-size: 0.88rem;
+}
+
+.betting-table-grid .standings-club {
+  min-width: 140px;
+}
+
+@media (max-width: 1100px) {
+  .betting-grid-main,
+  .betting-grid-two,
+  .betting-table-grid,
+  .betting-hypothesis-grid,
+  .betting-tests,
+  .betting-tools,
+  .betting-score-strip,
+  .betting-stat-row,
+  .betting-probability-bars {
+    grid-template-columns: 1fr;
+  }
+
+  .betting-hero {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 720px) {
+  .betting-shell {
+    padding: 14px;
+  }
+
+  .betting-panel {
+    padding: 14px;
+    border-radius: 14px;
+  }
+}

@@ -151,6 +151,43 @@ Minimum Step 2 compliant EDA flow:
 
 This structure makes the EDA phase explicit and tool-driven rather than a direct answer from the model.
 
+### Framework, Tool Calling, and Multi-Agent Design
+
+- `Agent framework`: the app now uses `Agno` agents for EDA planning and specialist orchestration, with LiteLLM-backed models underneath.
+- `Real tool calling`: the chat router in `app.py` uses LiteLLM `tools` plus `tool_choice="auto"` so the model can invoke `run_runtime_query` and `run_analysis_pipeline` as actual function calls.
+- `Distinct specialist agents`: the warehouse EDA path creates role-specific agents for trend, comparison, correlation, quality, and distribution analysis. Each specialist has separate instructions, calls its specialist tool, and runs concurrently.
+- `Grounded hypothesis objects`: the final hypothesis now carries machine-readable `evidence_objects` tied back to profile, trend, correlation, and quality outputs in addition to human-readable evidence bullets.
+
+### Betting Room Add-On
+
+The repo also includes a completely separate betting page at `/betting-room-page`, built from the public `luisgomezordoniez/poisson-football` project and adapted into the current FastAPI app as an additive feature.
+
+What was ported from that repo:
+
+- `Poisson-family match models`: [betting_room_service.py](betting_room_service.py) ports the original repo logic for `estimateParams`, `predictMatch`, `simulateLeague`, `computeTable`, `poissonGoodnessOfFitTest`, `independenceTest`, and `dispersionTest` into Python equivalents such as `estimate_params`, `predict_match_tool`, `simulate_league_tool`, `compute_table`, `poisson_goodness_of_fit_test`, `independence_test`, and `dispersion_test`.
+- `Runtime collection from football-data.co.uk`: [betting_room_service.py](betting_room_service.py) implements `collect_match_data_tool`, `fetch_external_season_matches`, and `fetch_runtime_csv`, which fetch season CSVs at runtime and cache artifacts under `artifacts/betting_room/`.
+- `Standalone frontend`: [betting_room.html](betting_room.html), [ui/betting_room.js](ui/betting_room.js), and [ui/betting_room.css](ui/betting_room.css) render a separate betting-room experience with probability bars, exact-score matrix, EDA tests, league-table comparison, and backend tool trace.
+- `Standalone API`: [app.py](app.py) adds `/betting-room-page`, `/betting/options`, and `/betting/analyze` as separate additive routes so the existing chat and standings flow stays intact.
+
+How the betting room maps to the homework steps:
+
+- `Step 1: Collect`: `collect_match_data_tool` retrieves real league-season data from `football-data.co.uk` at runtime and stores persistent JSON artifacts in `artifacts/betting_room/data/`.
+- `Step 2: Explore and Analyze`: `run_betting_analysis` fans out specialist tools in parallel for probability estimation, assumption testing, and league simulation before aggregating the outputs.
+- `Step 3: Hypothesize`: `build_hypothesis_tool` converts model probabilities, statistical tests, and bookmaker edge comparison into a concrete betting thesis with evidence and caveats.
+
+Specific concepts implemented in the betting room:
+
+- `Frontend`: `betting_room.html` + `ui/betting_room.js`
+- `Agent framework`: the main app framework remains `Agno`; the betting room is an additive analytics surface inside the same deployed app
+- `Tool calling`: `run_betting_analysis` executes real backend tools including `collect_match_data_tool`, `predict_match_tool`, `run_assumption_tests_tool`, `simulate_league_tool`, `evaluate_value_bet_tool`, and `build_hypothesis_tool`
+- `Non-trivial dataset`: runtime football-data CSV collection over multiple seasons from `football-data.co.uk`
+- `Multi-agent pattern`: fan-out specialist pattern inside `run_betting_analysis` using parallel probability, assumption-test, and league-simulation specialists
+- `Artifacts`: betting-room cache files and markdown reports are written under `artifacts/betting_room/`
+- `Structured output`: the betting-room API returns structured JSON payloads for the page, including tables, tool traces, score matrices, and hypothesis blocks
+- `Second retrieval method`: the betting room uses runtime web CSV retrieval first and DuckDB as a backup retrieval path
+- `Data visualization`: probability bars, score matrix, and predicted-vs-actual table comparison
+- `Parallel execution`: specialist tools run concurrently inside `run_betting_analysis`
+
 ## Setup
 
 Preferred local workflow with `uv`:

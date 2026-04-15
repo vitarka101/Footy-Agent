@@ -4,6 +4,7 @@ version = "0.2.0"
 description = "Footy Agent — a football analytics chatbot backed by DuckDB, EDA tools, and Google Cloud storage."
 requires-python = ">=3.10"
 dependencies = [
+    "agno>=1.8,<2",
     "beautifulsoup4>=4.12,<5",
     "duckdb>=1.1,<2",
     "fastapi>=0.115,<1",

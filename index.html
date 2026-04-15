@@ -29,65 +29,94 @@
         </div>
 
         <nav class="nav-pills" aria-label="Primary">
-          <button class="pill pill-active" type="button">Analyst Desk</button>
-          <a class="pill pill-link" href="/standings-page" target="_blank" rel="noopener noreferrer">Standings</a>
+          <button id="nav-analyst-desk" class="pill pill-active" type="button">Analyst Desk</button>
+          <button id="nav-standings" class="pill pill-link" type="button">Standings</button>
+          <a id="nav-betting-room" class="pill pill-link" href="/betting-room-page">Betting Room</a>
         </nav>
 
         <div class="status-cluster">
           <button id="refresh-data-button" class="refresh-button" type="button">Refresh Data</button>
-          <div id="refresh-status-badge" class="status-note">Syncs recent matches to GCS and DuckDB</div>
-          <div id="runtime-provider-pill" class="live-pill">
-            <span class="live-dot"></span>
-            <span>Runtime</span>
-          </div>
-          <div id="runtime-model-pill" class="pill pill-runtime">Model</div>
+          <div id="refresh-status-badge" class="status-note"></div>
         </div>
       </header>
 
       <main class="landing-page-main">
-        <section class="analysis-stream">
+        <section id="analyst-view" class="analysis-stream">
           <div class="workspace-header workspace-header-simple">
             <div class="workspace-copy">
               <p id="hero-eyebrow" class="section-kicker">Analyst desk</p>
-              <h2 id="hero-title" class="workspace-title">Latest result canvas</h2>
-              <p id="hero-description" class="workspace-description">
-                Ask on the right. The full answer, charts, tables, and sources open here.
-              </p>
+              <h2 id="hero-title" class="workspace-title">Latest result</h2>
+              <p id="hero-description" class="workspace-description">Answer, charts, and sources.</p>
             </div>
           </div>
           <div id="analysis-content" class="analysis-content analysis-content-page" aria-live="polite"></div>
+
+          <aside id="chat-rail" class="chat-shell chat-rail floating-chat-shell">
+            <div class="chat-rail-head">
+              <div>
+                <p class="section-kicker">Ask the analyst</p>
+                <h3>Chat</h3>
+              </div>
+              <div class="tool-tag">Floating dock</div>
+            </div>
+
+            <div id="chat-log" class="chat-log chat-history" aria-live="polite"></div>
+
+            <form id="chat-form" class="chat-form">
+              <label class="chat-label" for="chat-input">Ask the analyst</label>
+              <div class="chat-input-stack">
+                <textarea
+                  id="chat-input"
+                  name="message"
+                  rows="3"
+                  placeholder="Try: Analyze La Liga, compare Spain leagues, or ask about Premier League home advantage."
+                ></textarea>
+                <button id="send-button" class="send-button" type="submit">Run Analysis</button>
+              </div>
+            </form>
+          </aside>
+        </section>
+
+        <section id="standings-view" class="panel standings-page-panel embedded-standings-view hidden-view" aria-live="polite">
+          <div class="standings-layout">
+            <aside class="standings-side-column">
+              <section class="standings-pulse">
+                <div class="panel-header">
+                  <div>
+                    <p class="section-kicker">Coverage</p>
+                    <h2 id="standings-pulse-title">League Pulse</h2>
+                  </div>
+                </div>
+                <p id="standings-pulse-summary" class="standings-pulse-summary"></p>
+                <div id="standings-pulse-grid" class="metric-grid standings-pulse-grid"></div>
+              </section>
+            </aside>
+
+            <section class="standings-main-column">
+              <div class="panel-header">
+                <div>
+                  <p class="section-kicker">Current Table</p>
+                  <h2 id="standings-title">Standings</h2>
+                </div>
+                <div id="standings-season-badge" class="tool-tag">Season</div>
+              </div>
+
+              <div class="standings-controls standings-controls-wide">
+                <label class="standings-filter">
+                  <span>Country</span>
+                  <select id="standings-country"></select>
+                </label>
+                <label class="standings-filter">
+                  <span>League</span>
+                  <select id="standings-league"></select>
+                </label>
+              </div>
+
+              <div id="standings-table" class="standings-table-wrap standings-table-page"></div>
+            </section>
+          </div>
         </section>
       </main>
-
-      <aside class="chat-shell chat-rail floating-chat-shell">
-        <div class="chat-rail-head">
-          <div>
-            <p class="section-kicker">Ask the analyst</p>
-            <h3>Chat</h3>
-          </div>
-          <div class="tool-tag">Floating dock</div>
-        </div>
-
-        <section class="chat-examples">
-          <p class="section-kicker">Example questions</p>
-          <div id="prompt-chips" class="prompt-chips prompt-chips-rail"></div>
-        </section>
-
-        <div id="chat-log" class="chat-log chat-history" aria-live="polite"></div>
-
-        <form id="chat-form" class="chat-form">
-          <label class="chat-label" for="chat-input">Ask the analyst</label>
-          <div class="chat-input-stack">
-            <textarea
-              id="chat-input"
-              name="message"
-              rows="3"
-              placeholder="Try: Analyze La Liga, compare Spain leagues, or ask about Premier League home advantage."
-            ></textarea>
-            <button id="send-button" class="send-button" type="submit">Run Analysis</button>
-          </div>
-        </form>
-      </aside>
     </div>
 
     <script src="/static/app.js" type="module"></script>

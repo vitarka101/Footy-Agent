@@ -98,3 +98,8 @@ gcloud auth login
 gcloud config set project YOUR_PROJECT_ID
 gcloud services enable cloudbuild.googleapis.com run.googleapis.com
 gcloud builds submit .
+
+
+-- What league generates most revenue ?
+
+-- executive summary??

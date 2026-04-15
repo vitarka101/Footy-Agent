@@ -48,6 +48,40 @@ STOPWORDS = {
     "who",
     "with",
 }
+FINANCE_HINTS = {
+    "revenue",
+    "profit",
+    "profitable",
+    "earnings",
+    "valuation",
+    "valuable",
+    "salary",
+    "wages",
+    "broadcast",
+    "rights",
+    "attendance",
+    "money",
+}
+SOCCER_LEAGUE_HINTS = {
+    "premier league",
+    "la liga",
+    "bundesliga",
+    "serie a",
+    "ligue 1",
+    "uefa",
+    "soccer",
+    "association football",
+}
+AMERICAN_FOOTBALL_HINTS = {
+    "nfl",
+    "national football league",
+    "american football",
+    "super bowl",
+}
+GENERIC_FINANCE_EXCLUDES = {
+    "association football",
+    "football",
+}
 
 
 @dataclass(frozen=True)
@@ -65,6 +99,11 @@ def normalize_text(value: str) -> str:
 
 def tokenize(text: str) -> list[str]:
     return [token for token in normalize_text(text).split() if token and token not in STOPWORDS]
+
+
+def is_finance_question(question: str) -> bool:
+    normalized = normalize_text(question)
+    return any(token in normalized.split() for token in FINANCE_HINTS)
 
 
 def dedupe_documents(documents: list[WebDocument]) -> list[WebDocument]:
@@ -248,7 +287,7 @@ def chunk_text(text: str, chunk_size: int = 850, overlap: int = 120) -> list[str
     return chunks
 
 
-def score_text(query_tokens: list[str], text: str, title: str = "") -> float:
+def score_text(query_tokens: list[str], text: str, title: str = "", question: str = "") -> float:
     normalized_text = normalize_text(f"{title} {text}")
     score = 0.0
     for token in query_tokens:
@@ -257,6 +296,16 @@ def score_text(query_tokens: list[str], text: str, title: str = "") -> float:
             score += 1.0 + min(2.5, occurrences * 0.35)
             if token in normalize_text(title):
                 score += 1.2
+    if is_finance_question(question):
+        if any(phrase in normalized_text for phrase in SOCCER_LEAGUE_HINTS):
+            score += 2.5
+        if any(phrase in normalized_text for phrase in FINANCE_HINTS):
+            score += 2.0
+        if any(phrase in normalized_text for phrase in AMERICAN_FOOTBALL_HINTS):
+            score -= 5.0
+        normalized_title = normalize_text(title)
+        if normalized_title in GENERIC_FINANCE_EXCLUDES:
+            score -= 2.5
     return score
 
 
@@ -265,7 +314,7 @@ def retrieve_relevant_snippets(question: str, documents: list[WebDocument], top_
     ranked: list[dict] = []
     for document in documents:
         for chunk in chunk_text(document.text or document.snippet):
-            score = score_text(query_tokens, chunk, document.title)
+            score = score_text(query_tokens, chunk, document.title, question=question)
             if score <= 0:
                 continue
             ranked.append(
@@ -279,6 +328,23 @@ def retrieve_relevant_snippets(question: str, documents: list[WebDocument], top_
             )
     ranked.sort(key=lambda item: item["score"], reverse=True)
     return ranked[:top_k]
+
+
+def filter_documents_for_question(question: str, documents: list[WebDocument]) -> list[WebDocument]:
+    if not is_finance_question(question):
+        return documents
+
+    filtered: list[WebDocument] = []
+    for document in documents:
+        normalized = normalize_text(f"{document.title} {document.snippet} {document.text}")
+        if any(phrase in normalized for phrase in AMERICAN_FOOTBALL_HINTS):
+            continue
+        if not any(phrase in normalized for phrase in FINANCE_HINTS):
+            continue
+        if not any(phrase in normalized for phrase in SOCCER_LEAGUE_HINTS):
+            continue
+        filtered.append(document)
+    return filtered or documents
 
 
 def keyword_frequency(snippets: list[dict], top_k: int = 8) -> list[dict]:
@@ -307,6 +373,7 @@ def build_web_fallback_bundle(question: str, search_query: str | None = None) ->
         documents.extend([])
 
     documents = dedupe_documents(documents)
+    documents = filter_documents_for_question(question, documents)
     snippets = retrieve_relevant_snippets(question, documents)
     if not snippets:
         raise ValueError("External football retrieval did not return any usable evidence.")
