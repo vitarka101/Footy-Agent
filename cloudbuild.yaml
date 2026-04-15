@@ -14,4 +14,5 @@ steps:
       - "--region=us-central1"
       - "--no-allow-unauthenticated"
       - "--port=8080"
+      - "--memory=2Gi"
       - "--update-env-vars=MODEL=vertex_ai/gemini-2.5-flash-lite,DUCKDB_PATH=football_data.duckdb"

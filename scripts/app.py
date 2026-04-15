@@ -66,7 +66,7 @@ REFRESH_PROJECT_ID = (
     or "agentic-ai-ak5486"
 ).strip()
 REFRESH_BUCKET_PREFIX = os.getenv("FOOTBALL_DATA_BUCKET_PREFIX", "").strip()
-REFRESH_WORKERS = int(os.getenv("FOOTBALL_DATA_WORKERS", "8"))
+REFRESH_WORKERS = int(os.getenv("FOOTBALL_DATA_WORKERS", "4"))
 REFRESH_LOOKBACK_DAYS = int(os.getenv("FOOTBALL_DATA_LOOKBACK_DAYS", "2"))
 REFRESH_TIMEOUT_SECONDS = int(os.getenv("REFRESH_TIMEOUT_SECONDS", "1200"))
 REFRESH_LOCK = threading.Lock()
@@ -374,7 +374,7 @@ class RefreshResponse(BaseModel):
 def build_refresh_command(lookback_days: int | None) -> list[str]:
     command = [
         sys.executable,
-        "football_data_to_gcs.py",
+        str(BASE_DIR / "scripts" / "football_data_to_gcs.py"),
         "--duckdb-path",
         DUCKDB_PATH,
         "--workers",
