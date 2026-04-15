@@ -158,7 +158,7 @@ function renderHypothesis(hypothesis) {
   const footer = [
     hypothesis.correlation_note ? `<p><strong>Correlation vs causation:</strong> ${escapeHtml(hypothesis.correlation_note)}</p>` : "",
     hypothesis.confidence ? `<p><strong>Overall confidence:</strong> ${escapeHtml(hypothesis.confidence)}</p>` : "",
-    hypothesis.next_checks?.length ? `<p><strong>Next check:</strong> ${escapeHtml(hypothesis.next_checks[0])}</p>` : "",
+    // hypothesis.next_checks?.length ? `<p><strong>Next check:</strong> ${escapeHtml(hypothesis.next_checks[0])}</p>` : "",
   ].join("");
   return `
     <section class="hypothesis-card">
@@ -638,12 +638,12 @@ function renderAnalysisCanvas() {
   const metaChips = (message.isConversational || message.isSimpleResponse)
     ? ""
     : [
-        message.scope ? `<span class="analysis-chip">${escapeHtml(message.scope)}</span>` : "",
-        message.dataMode && message.dataMode !== "none" ? `<span class="analysis-chip">${escapeHtml(message.dataMode.replaceAll("_", " "))}</span>` : "",
-        message.provider ? `<span class="analysis-chip">${escapeHtml(message.provider)}</span>` : "",
-      ]
-        .filter(Boolean)
-        .join("");
+      message.scope ? `<span class="analysis-chip">${escapeHtml(message.scope)}</span>` : "",
+      message.dataMode && message.dataMode !== "none" ? `<span class="analysis-chip">${escapeHtml(message.dataMode.replaceAll("_", " "))}</span>` : "",
+      message.provider ? `<span class="analysis-chip">${escapeHtml(message.provider)}</span>` : "",
+    ]
+      .filter(Boolean)
+      .join("");
 
   const supportingTable = message.table
     ? `
@@ -914,10 +914,35 @@ function setRefreshState(isRefreshing, message) {
   elements.refreshStatusBadge.textContent = message;
 }
 
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function pollRefreshJob(jobId) {
+  while (true) {
+    const response = await fetch(`/refresh/${jobId}`);
+    if (!response.ok) {
+      throw new Error("Failed to fetch refresh status.");
+    }
+
+    const payload = await response.json();
+    if (payload.status === "queued" || payload.status === "running") {
+      await wait(1500);
+      continue;
+    }
+    if (payload.status === "succeeded") {
+      return payload;
+    }
+
+    const detail = `${payload.detail} ${payload.output_tail?.join(" | ") || ""}`.trim();
+    throw new Error(detail || "Refresh failed.");
+  }
+}
+
 async function refreshData() {
   if (state.refreshing) return;
 
-  setRefreshState(true, "Refreshing recent matches from football-data.co.uk and syncing GCS + DuckDB...");
+  setRefreshState(true, "");
   try {
     const response = await fetch("/refresh", {
       method: "POST",
@@ -941,11 +966,12 @@ async function refreshData() {
     }
 
     const payload = await response.json();
+    const finalStatus = await pollRefreshJob(payload.job_id);
     await loadDashboard();
     if (state.currentView === "standings" || state.standings) {
       await loadStandings(state.standings?.selected_country || "", state.standings?.selected_league || "");
     }
-    setRefreshState(false, payload.detail);
+    setRefreshState(false, finalStatus.detail);
   } catch (error) {
     setRefreshState(false, error.message);
   }

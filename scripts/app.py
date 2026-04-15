@@ -7,6 +7,8 @@ import re
 import subprocess
 import sys
 import threading
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import uvicorn
@@ -70,6 +72,9 @@ REFRESH_WORKERS = int(os.getenv("FOOTBALL_DATA_WORKERS", "4"))
 REFRESH_LOOKBACK_DAYS = int(os.getenv("FOOTBALL_DATA_LOOKBACK_DAYS", "2"))
 REFRESH_TIMEOUT_SECONDS = int(os.getenv("REFRESH_TIMEOUT_SECONDS", "1200"))
 REFRESH_LOCK = threading.Lock()
+REFRESH_JOBS_LOCK = threading.Lock()
+REFRESH_JOBS: dict[str, dict] = {}
+ACTIVE_REFRESH_JOB_ID: str | None = None
 
 SYSTEM_PROMPT = """\
 You are Footy Agent, a football analytics assistant.
@@ -368,7 +373,19 @@ class RefreshRequest(BaseModel):
 class RefreshResponse(BaseModel):
     status: str
     detail: str
+    job_id: str
+    status_url: str
     output_tail: list[str]
+
+
+class RefreshStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    detail: str
+    lookback_days: int
+    output_tail: list[str]
+    started_at: str | None = None
+    finished_at: str | None = None
 
 
 def build_refresh_command(lookback_days: int | None) -> list[str]:
@@ -402,6 +419,102 @@ def upload_duckdb_snapshot() -> None:
     client = storage.Client(project=REFRESH_PROJECT_ID or None)
     blob = client.bucket(bucket_name).blob(object_name)
     blob.upload_from_filename(str(database_path))
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def refresh_status_url(job_id: str) -> str:
+    return f"/refresh/{job_id}"
+
+
+def get_active_refresh_job() -> dict | None:
+    with REFRESH_JOBS_LOCK:
+        if ACTIVE_REFRESH_JOB_ID is None:
+            return None
+        job = REFRESH_JOBS.get(ACTIVE_REFRESH_JOB_ID)
+        return dict(job) if job else None
+
+
+def get_refresh_job(job_id: str) -> dict:
+    with REFRESH_JOBS_LOCK:
+        job = REFRESH_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Refresh job not found.")
+        return dict(job)
+
+
+def update_refresh_job(job_id: str, **fields) -> None:
+    with REFRESH_JOBS_LOCK:
+        job = REFRESH_JOBS.get(job_id)
+        if job is None:
+            return
+        job.update(fields)
+
+
+def clear_active_refresh_job(job_id: str) -> None:
+    global ACTIVE_REFRESH_JOB_ID
+
+    with REFRESH_JOBS_LOCK:
+        if ACTIVE_REFRESH_JOB_ID == job_id:
+            ACTIVE_REFRESH_JOB_ID = None
+
+
+def run_refresh_job(job_id: str, lookback_days: int) -> None:
+    update_refresh_job(job_id, status="running", detail="Refresh job is running.", started_at=utc_now_iso())
+
+    try:
+        command = build_refresh_command(lookback_days)
+        completed = subprocess.run(
+            command,
+            cwd=str(BASE_DIR),
+            capture_output=True,
+            text=True,
+            timeout=REFRESH_TIMEOUT_SECONDS,
+            env=os.environ.copy(),
+        )
+        combined_output = "\n".join(
+            part.strip() for part in (completed.stdout, completed.stderr) if part.strip()
+        )
+        output_tail = [line for line in combined_output.splitlines() if line.strip()][-12:]
+
+        if completed.returncode != 0:
+            update_refresh_job(
+                job_id,
+                status="failed",
+                detail="Refresh job failed.",
+                output_tail=output_tail,
+                finished_at=utc_now_iso(),
+            )
+            return
+
+        upload_duckdb_snapshot()
+        update_refresh_job(
+            job_id,
+            status="succeeded",
+            detail="Recent football data refreshed in GCS and DuckDB.",
+            output_tail=output_tail,
+            finished_at=utc_now_iso(),
+        )
+    except subprocess.TimeoutExpired:
+        update_refresh_job(
+            job_id,
+            status="timed_out",
+            detail=f"Refresh job exceeded {REFRESH_TIMEOUT_SECONDS} seconds.",
+            finished_at=utc_now_iso(),
+        )
+    except Exception as exc:  # pragma: no cover - runtime protection
+        LOGGER.exception("Refresh job %s crashed", job_id)
+        update_refresh_job(
+            job_id,
+            status="failed",
+            detail=f"Refresh job crashed: {exc}",
+            finished_at=utc_now_iso(),
+        )
+    finally:
+        REFRESH_LOCK.release()
+        clear_active_refresh_job(job_id)
 
 
 def provider_label(model_name: str) -> str:
@@ -864,49 +977,62 @@ def post_chat(request: ChatRequest) -> dict:
         raise HTTPException(status_code=500, detail=f"Failed to answer chat request: {exc}") from exc
 
 
-@app.post("/refresh", response_model=RefreshResponse)
-@app.post("/api/refresh", response_model=RefreshResponse)
+@app.post("/refresh", response_model=RefreshResponse, status_code=202)
+@app.post("/api/refresh", response_model=RefreshResponse, status_code=202)
 def refresh_data(request: RefreshRequest) -> dict:
-    if not REFRESH_LOCK.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="A refresh job is already running.")
-
-    try:
-        command = build_refresh_command(request.lookback_days)
-        completed = subprocess.run(
-            command,
-            cwd=str(BASE_DIR),
-            capture_output=True,
-            text=True,
-            timeout=REFRESH_TIMEOUT_SECONDS,
-            env=os.environ.copy(),
-        )
-        combined_output = "\n".join(
-            part.strip() for part in (completed.stdout, completed.stderr) if part.strip()
-        )
-        output_tail = [line for line in combined_output.splitlines() if line.strip()][-12:]
-
-        if completed.returncode != 0:
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "message": "Refresh job failed.",
-                    "output_tail": output_tail,
-                },
-            )
-
-        upload_duckdb_snapshot()
-        return {
-            "status": "ok",
-            "detail": "Recent football data refreshed in GCS and DuckDB.",
-            "output_tail": output_tail,
-        }
-    except subprocess.TimeoutExpired as exc:
+    active_job = get_active_refresh_job()
+    if active_job is not None:
         raise HTTPException(
-            status_code=504,
-            detail=f"Refresh job exceeded {REFRESH_TIMEOUT_SECONDS} seconds.",
-        ) from exc
-    finally:
-        REFRESH_LOCK.release()
+            status_code=409,
+            detail={
+                "message": "A refresh job is already running.",
+                "job_id": active_job["job_id"],
+                "status_url": refresh_status_url(active_job["job_id"]),
+            },
+        )
+    if not REFRESH_LOCK.acquire(blocking=False):
+        active_job = get_active_refresh_job()
+        detail: dict | str = "A refresh job is already running."
+        if active_job is not None:
+            detail = {
+                "message": "A refresh job is already running.",
+                "job_id": active_job["job_id"],
+                "status_url": refresh_status_url(active_job["job_id"]),
+            }
+        raise HTTPException(status_code=409, detail=detail)
+
+    lookback_days = request.lookback_days or REFRESH_LOOKBACK_DAYS
+    job_id = str(uuid.uuid4())
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "detail": "Refresh job queued.",
+        "lookback_days": lookback_days,
+        "output_tail": [],
+        "started_at": None,
+        "finished_at": None,
+    }
+
+    global ACTIVE_REFRESH_JOB_ID
+    with REFRESH_JOBS_LOCK:
+        REFRESH_JOBS[job_id] = job
+        ACTIVE_REFRESH_JOB_ID = job_id
+
+    worker = threading.Thread(target=run_refresh_job, args=(job_id, lookback_days), daemon=True)
+    worker.start()
+    return {
+        "status": "accepted",
+        "detail": "Refresh job accepted.",
+        "job_id": job_id,
+        "status_url": refresh_status_url(job_id),
+        "output_tail": [],
+    }
+
+
+@app.get("/refresh/{job_id}", response_model=RefreshStatusResponse)
+@app.get("/api/refresh/{job_id}", response_model=RefreshStatusResponse)
+def get_refresh_status(job_id: str) -> dict:
+    return get_refresh_job(job_id)
 
 
 if __name__ == "__main__":  # pragma: no cover - local entrypoint

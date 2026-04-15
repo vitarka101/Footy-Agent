@@ -63,12 +63,32 @@ def test_team_performance_queries_show_full_eda_pack() -> None:
 
 def test_external_football_business_questions_use_web_fallback() -> None:
     payload = chat_response("What league generates most revenue ?")
-    assert payload["data_mode"] in {"web_fallback", "web_fallback_failed"}
+    assert payload["data_mode"] == "external_fact"
+    assert payload["is_simple_response"]
+
+
+def test_player_fact_questions_do_not_trigger_warehouse_eda() -> None:
+    payload = chat_response("which league does ronaldo play from")
+    assert payload["intent"] == "external_fact"
+    assert payload["is_simple_response"]
+    assert payload["data_mode"] == "external_fact"
+    assert payload["tool_calls"] == []
+
+
+def test_team_descriptive_facts_do_not_trigger_warehouse_eda() -> None:
+    payload = chat_response("what is the jersey color of arsenal")
+    assert payload["intent"] == "external_fact"
+    assert payload["is_simple_response"]
+    assert payload["data_mode"] == "external_fact"
+    assert payload["tool_calls"] == []
+    assert "red" in payload["answer"].lower()
+    assert "warehouse" not in payload["answer"].lower()
 
 
 def test_profitable_league_question_uses_web_fallback() -> None:
     payload = chat_response("what is the most profitable league")
-    assert payload["data_mode"] in {"web_fallback", "web_fallback_failed"}
+    assert payload["data_mode"] == "external_fact"
+    assert payload["is_simple_response"]
 
 
 def test_provider_label() -> None:

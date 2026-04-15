@@ -57,6 +57,59 @@ PROMPT_CHIPS = [
     "How complete is referee data in Ligue 1?",
     "Analyze the latest Japan J1 League trends.",
 ]
+PLAYER_FACT_PATTERNS = (
+    r"\b(?:which|what)\s+(?:league|team|club)\s+does\s+.+\s+play\b",
+    r"\bwhere\s+does\s+.+\s+play\b",
+    r"\bwho\s+does\s+.+\s+play\s+for\b",
+    r"\bwhat\s+team\s+is\s+.+\s+on\b",
+    r"\bwhich\s+club\s+is\s+.+\s+at\b",
+)
+UNSUPPORTED_GRAIN_TERMS = (
+    "player",
+    "manager",
+    "coach",
+    "transfer",
+    "contract",
+    "salary",
+    "wages",
+    "net worth",
+    "position",
+    "age",
+    "nationality",
+)
+UNSUPPORTED_TEAM_FACT_TERMS = (
+    "jersey",
+    "shirt",
+    "kit",
+    "color",
+    "colour",
+    "badge",
+    "crest",
+    "mascot",
+    "nickname",
+    "stadium",
+    "owner",
+    "founded",
+    "founded in",
+    "captain",
+)
+DIRECT_FACT_TIME_SENSITIVE_TERMS = (
+    "latest",
+    "current",
+    "today",
+    "now",
+    "this season",
+    "most profitable",
+    "revenue",
+    "valuation",
+    "worth",
+    "price",
+)
+KNOWN_TEAM_FACTS = {
+    "arsenal": {
+        "jersey_color": "Arsenal's home jersey is traditionally red with white sleeves.",
+    },
+}
 FOOTBALL_DOMAIN_TERMS = {
     "football",
     "soccer",
@@ -589,6 +642,12 @@ class DomainCheck:
     matched_terms: tuple[str, ...] = ()
     external_label: str | None = None
     external_query: str | None = None
+
+
+@dataclass(frozen=True)
+class AnswerabilityCheck:
+    mode: Literal["warehouse", "external_fact", "clarify"]
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -2979,6 +3038,151 @@ def build_known_external_payload(message: str, domain: DomainCheck) -> dict | No
     }
 
 
+def should_use_direct_fact_answer(message: str, scope: QueryScope) -> bool:
+    normalized = normalize_text(message)
+    if any(contains_phrase(normalized, normalize_text(term)) for term in DIRECT_FACT_TIME_SENSITIVE_TERMS):
+        return False
+    if any(re.search(pattern, normalized) for pattern in PLAYER_FACT_PATTERNS):
+        return True
+    if scope.team and any(contains_phrase(normalized, normalize_text(term)) for term in UNSUPPORTED_TEAM_FACT_TERMS):
+        return True
+    if any(contains_phrase(normalized, normalize_text(term)) for term in UNSUPPORTED_GRAIN_TERMS):
+        return True
+    return False
+
+
+def fallback_direct_fact_answer(message: str, scope: QueryScope) -> str:
+    normalized = normalize_text(message)
+    team_key = normalize_text(scope.team or "")
+    if (
+        scope.team
+        and team_key in KNOWN_TEAM_FACTS
+        and any(contains_phrase(normalized, normalize_text(term)) for term in ("jersey", "shirt", "kit"))
+        and any(contains_phrase(normalized, normalize_text(term)) for term in ("color", "colour"))
+    ):
+        return KNOWN_TEAM_FACTS[team_key]["jersey_color"]
+    if scope.team:
+        return (
+            f"This is a non-warehouse football fact about {scope.team}. "
+            "I do not have a reliable direct fact answer available at runtime."
+        )
+    return "This is a non-warehouse football fact. I do not have a reliable direct fact answer available at runtime."
+
+
+def build_direct_fact_payload(message: str, scope: QueryScope, domain: DomainCheck) -> dict:
+    answer = fallback_direct_fact_answer(message, scope)
+    if completion is not None:
+        try:
+            response = completion(
+                model=MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You answer stable football fact questions directly and concisely. "
+                            "Use general football knowledge. Do not talk about warehouses, datasets, or tools. "
+                            "If uncertain, say you are not fully certain. Keep the answer to 1-3 sentences."
+                        ),
+                    },
+                    {"role": "user", "content": message},
+                ],
+                temperature=0,
+                timeout=MODEL_TIMEOUT_SECONDS,
+                api_base=LITELLM_API_BASE or None,
+                api_key=LITELLM_API_KEY or None,
+            )
+            candidate = compact_whitespace(response.choices[0].message.content or "")
+            if candidate:
+                answer = candidate
+        except Exception:
+            pass
+    return {
+        "answer": answer,
+        "tool_calls": [],
+        "highlights": [],
+        "table": None,
+        "suggested_prompts": [
+            "Which club does Ronaldo play for?",
+            "What is Arsenal's home stadium?",
+            "Which country has won the FIFA World Cup the most?",
+        ],
+        "charts": [],
+        "hypothesis": None,
+        "sources": [],
+        "executive_summary": [],
+        "data_mode": "external_fact",
+        "out_of_context": False,
+        "is_conversational": False,
+        "is_simple_response": True,
+        "intent": "external_fact",
+        "scope": scope.label if not scope.is_global else (domain.external_label or "external football fact"),
+    }
+
+
+def compact_simple_payload(payload: dict, *, intent: str, scope: str, data_mode: str = "external_fact") -> dict:
+    return {
+        "answer": payload.get("answer", ""),
+        "tool_calls": [],
+        "highlights": [],
+        "table": None,
+        "suggested_prompts": payload.get("suggested_prompts", []),
+        "charts": [],
+        "hypothesis": None,
+        "sources": payload.get("sources", [])[:2],
+        "executive_summary": [],
+        "data_mode": data_mode,
+        "out_of_context": False,
+        "is_conversational": False,
+        "is_simple_response": True,
+        "intent": intent,
+        "scope": scope,
+    }
+
+
+def assess_answerability(message: str, scope: QueryScope, domain: DomainCheck) -> AnswerabilityCheck:
+    normalized = normalize_text(message)
+    warehouse_scope_present = bool(scope.team or scope.league or scope.country or scope.season)
+    asks_for_analysis = any(
+        term in normalized
+        for term in ("analyze", "analysis", "trend", "compare", "profile", "eda", "standings", "table", "correlation")
+    )
+
+    if any(re.search(pattern, normalized) for pattern in PLAYER_FACT_PATTERNS):
+        return AnswerabilityCheck(
+            mode="external_fact",
+            reason="The question is about a player-level football fact, which is outside the team/league warehouse grain.",
+        )
+
+    if any(contains_phrase(normalized, normalize_text(term)) for term in UNSUPPORTED_GRAIN_TERMS) and not warehouse_scope_present:
+        return AnswerabilityCheck(
+            mode="external_fact",
+            reason="The question asks about football entities or attributes not represented in the warehouse schema.",
+        )
+
+    if scope.team and any(contains_phrase(normalized, normalize_text(term)) for term in UNSUPPORTED_TEAM_FACT_TERMS):
+        return AnswerabilityCheck(
+            mode="external_fact",
+            reason="The question asks for a descriptive team fact that is not represented in the warehouse schema.",
+        )
+
+    if domain.external_label:
+        return AnswerabilityCheck(
+            mode="external_fact",
+            reason="The question is football-related but points to information outside the warehouse slice.",
+        )
+
+    if warehouse_scope_present or asks_for_analysis or classify_count_subject(message):
+        return AnswerabilityCheck(
+            mode="warehouse",
+            reason="The question can be answered from team, league, country, season, or match-level warehouse data.",
+        )
+
+    return AnswerabilityCheck(
+        mode="clarify",
+        reason="The question is football-related but does not clearly map to the warehouse schema or to a known external fact path.",
+    )
+
+
 def build_warehouse_charts(
     connection: duckdb.DuckDBPyConnection,
     scope: QueryScope,
@@ -4514,6 +4718,25 @@ def chat_response(message: str, duckdb_path: str = DEFAULT_DUCKDB_PATH) -> dict:
             return known_external_payload
 
         scope = resolve_scope(connection, message)
+        answerability = assess_answerability(message, scope, domain)
+
+        if answerability.mode == "external_fact":
+            if should_use_direct_fact_answer(message, scope):
+                return build_direct_fact_payload(message, scope, domain)
+            payload = build_web_fallback_payload(message, domain)
+            payload = compact_simple_payload(
+                payload,
+                intent="external_fact",
+                scope=domain.external_label or "external football fact",
+            )
+            return payload
+
+        if answerability.mode == "clarify":
+            payload = direct_football_clarification_payload(message, scope)
+            payload["intent"] = "direct_football_reply"
+            payload["scope"] = scope.label
+            return payload
+
         intent = detect_intent(message, team_present=scope.team is not None)
         if intent == "count_lookup":
             payload = count_lookup_payload(connection, message, scope)

@@ -140,10 +140,35 @@ function setRefreshState(isRefreshing, message) {
   elements.refreshStatusBadge.textContent = message;
 }
 
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function pollRefreshJob(jobId) {
+  while (true) {
+    const response = await fetch(`/refresh/${jobId}`);
+    if (!response.ok) {
+      throw new Error("Failed to fetch refresh status.");
+    }
+
+    const payload = await response.json();
+    if (payload.status === "queued" || payload.status === "running") {
+      await wait(1500);
+      continue;
+    }
+    if (payload.status === "succeeded") {
+      return payload;
+    }
+
+    const detail = `${payload.detail} ${payload.output_tail?.join(" | ") || ""}`.trim();
+    throw new Error(detail || "Refresh failed.");
+  }
+}
+
 async function refreshData() {
   if (state.refreshing) return;
 
-  setRefreshState(true, "Refreshing recent matches from football-data.co.uk and syncing GCS + DuckDB...");
+  setRefreshState(true, "");
   try {
     const response = await fetch("/refresh", {
       method: "POST",
@@ -167,8 +192,9 @@ async function refreshData() {
     }
 
     const payload = await response.json();
+    const finalStatus = await pollRefreshJob(payload.job_id);
     await loadStandings(state.standings?.selected_country || "", state.standings?.selected_league || "");
-    setRefreshState(false, payload.detail);
+    setRefreshState(false, finalStatus.detail);
   } catch (error) {
     setRefreshState(false, error.message);
   }

@@ -448,14 +448,15 @@ Implemented UI endpoints:
 - `GET /health`: simple health check
 - `GET /stats`: returns dashboard cards, prompt chips, spotlight stats, runtime metadata, and tool metadata
 - `GET /standings`: returns a computed latest-season standings table for the selected country and league
-- `POST /refresh`: runs the recent refresh job to update GCS Parquet and DuckDB
+- `POST /refresh`: enqueues a background refresh job and returns `202 Accepted` with a job id
+- `GET /refresh/{job_id}`: returns refresh job status, timestamps, and recent log tail
 - `POST /chat`: runs the full analyst pipeline for every question:
   1. domain validation
   2. warehouse retrieval from DuckDB if coverage exists
   3. web search + crawling + ranked snippet retrieval if warehouse coverage is missing
   4. EDA over the retrieved evidence with charts
   5. a final evidence-backed hypothesis and answer
-- `GET /api/health`, `GET /api/dashboard`, `GET /api/standings`, and `POST /api/chat`: backward-compatible aliases
+- `GET /api/health`, `GET /api/dashboard`, `GET /api/standings`, `POST /api/refresh`, `GET /api/refresh/{job_id}`, and `POST /api/chat`: backward-compatible aliases
 
 Current chat analysis modes:
 

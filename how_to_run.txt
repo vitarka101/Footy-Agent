@@ -103,3 +103,20 @@ gcloud builds submit .
 -- What league generates most revenue ?
 
 -- executive summary??
+
+-- memory?
+
+--
+In scripts/app.py, the refresh endpoint:
+
+grabs a lock
+launches a subprocess
+waits synchronously
+may run for a long time
+then uploads the whole DuckDB snapshot
+
+That is not a great web-app pattern.
+
+It should have been a background job, task queue, or external scheduled pipeline, not a blocking request-driven subprocess workflow.
+
+-- app.pyproject_uv

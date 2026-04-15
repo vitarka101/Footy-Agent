@@ -13,7 +13,6 @@ const elements = {
   homeTeam: document.getElementById("betting-home-team"),
   awayTeam: document.getElementById("betting-away-team"),
   analyzeButton: document.getElementById("betting-analyze"),
-  simulateButton: document.getElementById("betting-simulate"),
   refreshButton: document.getElementById("betting-refresh"),
   sourceSummary: document.getElementById("betting-source-summary"),
   fixtureTitle: document.getElementById("betting-fixture-title"),
@@ -274,7 +273,6 @@ function renderAnalysis(payload) {
   renderTable(elements.predictedTable, payload.predicted_table);
   renderTable(elements.actualTable, payload.actual_table);
   renderTools(payload.tool_calls);
-  elements.simulateButton.disabled = false;
 }
 
 async function analyze() {
@@ -323,10 +321,6 @@ function wireEvents() {
   elements.season.addEventListener("change", refreshOptionsFromControls);
   elements.homeTeam.addEventListener("change", syncTeamSelectors);
   elements.analyzeButton.addEventListener("click", analyze);
-  elements.simulateButton.addEventListener("click", () => {
-    if (!state.analysis) return;
-    elements.simulatedResult.textContent = `${state.analysis.home_team} ${state.analysis.simulated_result.home} - ${state.analysis.simulated_result.away} ${state.analysis.away_team}`;
-  });
   elements.refreshButton.addEventListener("click", async () => {
     state.forceRefresh = true;
     await analyze();
