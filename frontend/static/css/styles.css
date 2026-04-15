@@ -837,22 +837,40 @@ body.landing-page.standings-mode .analysis-stream {
 
 .hypothesis-card p,
 .chart-summary,
-.source-snippet {
-  margin: 0;
-  color: var(--text-1);
-  line-height: 1.6;
-}
-
 .hypothesis-evidence,
 .source-list {
-  margin: 10px 0 0;
-  padding-left: 18px;
+  margin: 8px 0 0;
+  padding-left: 0;
   color: var(--text-1);
+  list-style: none;
 }
 
 .hypothesis-evidence li,
 .source-item {
   margin-top: 6px;
+}
+
+.source-item {
+  border-top: 1px solid rgba(150, 226, 255, 0.08);
+  padding-top: 6px;
+}
+
+.source-item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.source-title {
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.source-meta {
+  margin-top: 2px;
+  font-size: 0.78rem;
+  color: var(--text-3);
+  line-height: 1.4;
+  word-break: break-all;
 }
 
 .hypothesis-candidate-stack {
@@ -914,6 +932,14 @@ body.landing-page.standings-mode .analysis-stream {
   border-radius: 999px;
 }
 
+.dumbbell-left-swatch {
+  background: #4a67ff;
+}
+
+.dumbbell-right-swatch {
+  background: #4ad9c6;
+}
+
 .chart-svg {
   display: block;
   width: 100%;
@@ -923,6 +949,25 @@ body.landing-page.standings-mode .analysis-stream {
 .chart-grid-line {
   stroke: rgba(177, 224, 243, 0.18);
   stroke-width: 1;
+}
+
+.dumbbell-link {
+  stroke: rgba(177, 224, 243, 0.24);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.dumbbell-dot {
+  stroke: rgba(7, 18, 26, 0.92);
+  stroke-width: 2;
+}
+
+.dumbbell-dot-left {
+  fill: #4a67ff;
+}
+
+.dumbbell-dot-right {
+  fill: #4ad9c6;
 }
 
 .chart-axis-label {

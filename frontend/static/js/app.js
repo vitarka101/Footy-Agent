@@ -343,6 +343,91 @@ function renderBarChart(chart) {
   `;
 }
 
+function renderAreaChart(chart) {
+  const width = 640;
+  const height = 240;
+  const padding = { top: 18, right: 18, bottom: 34, left: 42 };
+  const series = normalizeSeriesData(chart.series);
+  const xValues = chart.x || [];
+  const allValues = series.flatMap((item) => item.data).filter((value) => value !== null);
+  if (!xValues.length || !allValues.length) return "";
+
+  const minValue = Math.min(0, ...allValues);
+  const maxValue = Math.max(...allValues, 0.1);
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const xStep = xValues.length > 1 ? plotWidth / (xValues.length - 1) : 0;
+  const yScale = (value) => padding.top + plotHeight - ((value - minValue) / (maxValue - minValue)) * plotHeight;
+
+  const layers = series
+    .map((item) => {
+      const pathPoints = item.data
+        .map((value, index) => (value === null ? null : `${index === 0 ? "M" : "L"} ${padding.left + index * xStep} ${yScale(value)}`))
+        .filter(Boolean)
+        .join(" ");
+      const firstValidIndex = item.data.findIndex((value) => value !== null);
+      const lastValidIndex = item.data.length - 1 - [...item.data].reverse().findIndex((value) => value !== null);
+      if (!pathPoints || firstValidIndex < 0 || lastValidIndex < 0) return "";
+      const areaPath = `${pathPoints} L ${padding.left + lastValidIndex * xStep} ${yScale(minValue)} L ${padding.left + firstValidIndex * xStep} ${yScale(minValue)} Z`;
+      const dots = item.data
+        .map((value, index) =>
+          value === null
+            ? ""
+            : `<circle cx="${padding.left + index * xStep}" cy="${yScale(value)}" r="3" fill="${item.color}"></circle>`,
+        )
+        .join("");
+      return `
+        <path d="${areaPath}" fill="${item.color}" fill-opacity="0.18"></path>
+        <path d="${pathPoints}" fill="none" stroke="${item.color}" stroke-width="2.4" stroke-linecap="round"></path>
+        ${dots}
+      `;
+    })
+    .join("");
+
+  const yTicks = Array.from({ length: 4 }, (_, index) => {
+    const value = minValue + ((maxValue - minValue) * index) / 3;
+    const y = yScale(value);
+    return `
+      <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" class="chart-grid-line"></line>
+      <text x="${padding.left - 8}" y="${y + 4}" text-anchor="end" class="chart-axis-label">${escapeHtml(formatDecimal(value, 1))}</text>
+    `;
+  }).join("");
+
+  const labelStep = Math.max(1, Math.ceil(xValues.length / 5));
+  const xLabels = xValues
+    .map((label, index) => {
+      if (index % labelStep !== 0 && index !== xValues.length - 1) return "";
+      return `<text x="${padding.left + index * xStep}" y="${height - 8}" text-anchor="middle" class="chart-axis-label">${escapeHtml(label)}</text>`;
+    })
+    .join("");
+
+  const legend = series
+    .map(
+      (item) => `
+        <span class="chart-legend-item">
+          <span class="chart-legend-swatch" style="background:${item.color}"></span>
+          ${escapeHtml(item.name)}
+        </span>
+      `,
+    )
+    .join("");
+
+  return `
+    <article class="chart-card">
+      <div class="chart-card-head">
+        <h4>${escapeHtml(chart.title)}</h4>
+        <div class="chart-legend">${legend}</div>
+      </div>
+      <svg viewBox="0 0 ${width} ${height}" class="chart-svg" role="img" aria-label="${escapeHtml(chart.title)}">
+        ${yTicks}
+        ${layers}
+        ${xLabels}
+      </svg>
+      <p class="chart-summary">${escapeHtml(chart.summary || "")}</p>
+    </article>
+  `;
+}
+
 function heatmapColor(value, minValue, maxValue) {
   if (!Number.isFinite(value)) return "rgba(255,255,255,0.08)";
   const normalized = maxValue === minValue ? 0.5 : (value - minValue) / (maxValue - minValue);
@@ -401,13 +486,89 @@ function renderHeatmapChart(chart) {
   `;
 }
 
+function renderDumbbellChart(chart) {
+  const width = 640;
+  const height = 250;
+  const padding = { top: 24, right: 26, bottom: 24, left: 138 };
+  const categories = chart.categories || [];
+  const leftValues = (chart.left_values || []).map((value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  });
+  const rightValues = (chart.right_values || []).map((value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  });
+  const allValues = [...leftValues, ...rightValues].filter((value) => value !== null);
+  if (!categories.length || !allValues.length) return "";
+
+  const minValue = Math.min(0, ...allValues);
+  const maxValue = Math.max(...allValues, 0.1);
+  const plotWidth = width - padding.left - padding.right;
+  const rowHeight = categories.length > 1 ? (height - padding.top - padding.bottom) / (categories.length - 1) : 0;
+  const xScale = (value) => padding.left + ((value - minValue) / (maxValue - minValue)) * plotWidth;
+
+  const rows = categories
+    .map((category, index) => {
+      const left = leftValues[index];
+      const right = rightValues[index];
+      if (left === null || right === null) return "";
+      const y = padding.top + index * rowHeight;
+      const leftX = xScale(left);
+      const rightX = xScale(right);
+      return `
+        <text x="${padding.left - 14}" y="${y + 4}" text-anchor="end" class="chart-axis-label">${escapeHtml(category)}</text>
+        <line x1="${leftX}" y1="${y}" x2="${rightX}" y2="${y}" class="dumbbell-link"></line>
+        <circle cx="${leftX}" cy="${y}" r="6" class="dumbbell-dot dumbbell-dot-left"></circle>
+        <circle cx="${rightX}" cy="${y}" r="6" class="dumbbell-dot dumbbell-dot-right"></circle>
+      `;
+    })
+    .join("");
+
+  const xTicks = Array.from({ length: 4 }, (_, index) => {
+    const value = minValue + ((maxValue - minValue) * index) / 3;
+    const x = xScale(value);
+    return `
+      <line x1="${x}" y1="${padding.top - 10}" x2="${x}" y2="${height - padding.bottom + 6}" class="chart-grid-line"></line>
+      <text x="${x}" y="${height - 4}" text-anchor="middle" class="chart-axis-label">${escapeHtml(formatDecimal(value, 1))}</text>
+    `;
+  }).join("");
+
+  const legend = `
+    <span class="chart-legend-item">
+      <span class="chart-legend-swatch dumbbell-left-swatch"></span>
+      ${escapeHtml(chart.left_series_name || "Left")}
+    </span>
+    <span class="chart-legend-item">
+      <span class="chart-legend-swatch dumbbell-right-swatch"></span>
+      ${escapeHtml(chart.right_series_name || "Right")}
+    </span>
+  `;
+
+  return `
+    <article class="chart-card">
+      <div class="chart-card-head">
+        <h4>${escapeHtml(chart.title)}</h4>
+        <div class="chart-legend">${legend}</div>
+      </div>
+      <svg viewBox="0 0 ${width} ${height}" class="chart-svg" role="img" aria-label="${escapeHtml(chart.title)}">
+        ${xTicks}
+        ${rows}
+      </svg>
+      <p class="chart-summary">${escapeHtml(chart.summary || "")}</p>
+    </article>
+  `;
+}
+
 function renderCharts(charts = []) {
   if (!charts.length) return "";
   const items = charts
     .map((chart) => {
       if (chart.type === "line") return renderLineChart(chart);
       if (chart.type === "bar") return renderBarChart(chart);
+      if (chart.type === "area") return renderAreaChart(chart);
       if (chart.type === "heatmap") return renderHeatmapChart(chart);
+      if (chart.type === "dumbbell") return renderDumbbellChart(chart);
       return "";
     })
     .join("");
@@ -450,7 +611,6 @@ function renderSources(sources = []) {
     .slice(0, 3)
     .map((source) => {
       const title = escapeHtml(source.title || "Source");
-      const snippet = escapeHtml(source.snippet || "");
       const meta = escapeHtml(source.source_type || "source");
       const link = source.url
         ? `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${title}</a>`
@@ -458,15 +618,14 @@ function renderSources(sources = []) {
       return `
         <li class="source-item">
           <div class="source-title">${link}</div>
-          <div class="source-meta">${meta}</div>
-          ${snippet ? `<div class="source-snippet">${snippet}</div>` : ""}
+          <div class="source-meta">${meta}${source.url ? ` · ${escapeHtml(source.url)}` : ""}</div>
         </li>
       `;
     })
     .join("");
   return `
     <section class="source-card">
-      <div class="section-kicker">External Validation Links</div>
+      <div class="section-kicker">Validation Links</div>
       <ul class="source-list">${items}</ul>
     </section>
   `;
@@ -768,12 +927,22 @@ async function loadDashboard() {
 }
 
 async function sendMessage(message) {
+  const history = state.messages
+    .filter((entry) => !entry.loading)
+    .slice(-5)
+    .map((entry) => ({
+      role: entry.role,
+      text: entry.text || "",
+      question: entry.question || "",
+      scope: entry.scope || "",
+      out_of_context: Boolean(entry.outOfContext),
+    }));
   const response = await fetch("/chat", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, history }),
   });
 
   if (!response.ok) {
@@ -841,12 +1010,7 @@ async function handleChatSubmit(event) {
       text: payload.answer,
       executiveSummary: payload.executive_summary || [],
       question: value,
-      toolCalls: [
-        ...(payload.tool_calls || []),
-        ...(payload.fallback_used
-          ? [{ label: "Model Fallback", summary: "Used deterministic analyst output because the configured model was unavailable." }]
-          : [{ label: payload.provider, summary: `Synthesized the final answer with ${payload.model}.` }]),
-      ],
+      toolCalls: [],
       highlights: payload.highlights,
       hypothesis: payload.hypothesis,
       charts: payload.charts,

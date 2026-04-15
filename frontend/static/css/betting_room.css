@@ -175,6 +175,13 @@
   font-size: 0.9rem;
 }
 
+.betting-panel-note {
+  margin: -4px 0 14px;
+  color: #9eb2c9;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
 .betting-score-panel {
   grid-column: 1 / -1;
 }

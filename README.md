@@ -1,224 +1,984 @@
-# Footy-Agent
+# Footy Agent
 
-Footy Agent is now structured like a deployable single-app project:
+Footy Agent is designed to be useful both for football newcomers and for users who want a more analytical view of the game.
 
-- `scripts/app.py` is the FastAPI entrypoint
-- `index.html` is the root frontend entrypoint
-- `pyproject.toml` supports `uv`-based local/dev workflow
-- `cloudbuild.yaml` deploys the app to Cloud Run
-- the chat layer can run on `Vertex AI` in Google Cloud and `Ollama` locally
+For a beginner, the project works as an interactive football explainer: a user can ask simple questions about leagues, scoring, home advantage, missing data, correlations, and general football concepts, and the app responds with grounded summaries instead of requiring the user to already understand the sport’s statistics ecosystem.
 
-The repo still includes the two football-data ingestion scripts:
+For a more analytical user, the system acts like a lightweight football research assistant. It can surface long-term league trends, compare competitions, inspect data quality, identify relationships between match metrics, and turn those findings into a concrete hypothesis with supporting evidence.
 
-- `historical_football_data_to_gcs.py`: full historical backfill
-- `football_data_to_gcs.py`: recent refresh script for cronjobs or on-demand backend execution
+For a betting-oriented user, the Betting Room extends that workflow into decision support. It retrieves current and historical match data, estimates probabilities with Poisson-family models, compares those probabilities against bookmaker odds when available, and produces a betting thesis that highlights whether the model sees a meaningful edge or only a weak lean.
 
-Both scripts convert source CSV files to Parquet and can write to Google Cloud Storage using this object layout:
+In short, the project is meant to cover three practical use cases in one system:
 
-`country=<country> / league=<league> / season=<season> / league_data.parquet`
+- learn football and football analytics as a beginner
+- explore league and team trends with evidence-backed summaries and hypotheses
+- evaluate fixture-level betting angles using probabilities, odds comparisons, and model caveats
 
-Example object path:
+Footy Agent is a football data analyst system built for the first half of a real analyst workflow:
 
-`country=england / league=premier_league / season=2025-2026 / league_data.parquet`
+1. `Collect` real football data at runtime
+2. `Explore` that data with explicit analytical tools
+3. `Hypothesize` from the evidence and communicate the result
 
-## Bucket Structure
+The project ships as a single FastAPI application with two user-facing analysis surfaces:
 
-The bucket hierarchy is:
+- `Analyst Desk` at `/`: a chat-driven football analytics assistant over a DuckDB warehouse
+- `Betting Room` at `/betting-room-page`: a separate runtime probability-analysis page for a chosen fixture using Poisson-family models, statistical tests, and a betting thesis
 
-`country=<country> / league=<league> / season=<season> /`
+## Repository Map
 
-This uses Hive-style partition folders, which are well-suited for BigQuery and other query engines that recognize partition-style paths.
+- [scripts/app.py](scripts/app.py): FastAPI entrypoint, API schemas, tool-calling router, runtime query path, chat response assembly, refresh job endpoints
+- [scripts/football_ui_service.py](scripts/football_ui_service.py): domain gating, scope resolution, answerability checks, question classification, dynamic EDA planning, warehouse analytics, chart builders, hypothesis builders, framework-backed specialist agents
+- [scripts/betting_room_service.py](scripts/betting_room_service.py): runtime match retrieval, Poisson-family models, statistical test tools, market-edge evaluation, parallel specialist fan-out, artifact writing
+- [scripts/football_data_to_gcs.py](scripts/football_data_to_gcs.py): incremental football-data refresh from external web sources into storage and DuckDB
+- [scripts/historical_football_data_to_gcs.py](scripts/historical_football_data_to_gcs.py): historical warehouse build from external football data pages and CSVs
+- [scripts/football_web_fallback.py](scripts/football_web_fallback.py): live web search and crawl fallback when a football question is outside warehouse coverage
+- [scripts/football_eda.py](scripts/football_eda.py): standalone Plotly + DuckDB EDA tool that writes persistent visual artifacts
+- [frontend/templates/index.html](frontend/templates/index.html): Analyst Desk HTML
+- [frontend/templates/standings.html](frontend/templates/standings.html): standings page HTML
+- [frontend/templates/betting_room.html](frontend/templates/betting_room.html): Betting Room HTML
+- [frontend/static/js/app.js](frontend/static/js/app.js): Analyst Desk frontend state, rendering, chart drawing, short-term conversation memory
+- [frontend/static/js/standings.js](frontend/static/js/standings.js): standings page client logic
+- [frontend/static/js/betting_room.js](frontend/static/js/betting_room.js): betting page rendering and API interaction
+- [frontend/static/css/styles.css](frontend/static/css/styles.css), [frontend/static/css/betting_room.css](frontend/static/css/betting_room.css): UI styling
+- [cloudbuild.yaml](cloudbuild.yaml): Google Cloud Run deployment pipeline
+- [Dockerfile](Dockerfile): runtime container
+- [pyproject.toml](pyproject.toml): dependencies including `agno`, `fastapi`, `duckdb`, `litellm`, `plotly`, and `pydantic`
 
-For example, England league folders would look like:
+## What The Application Actually Does
+
+### Analyst Desk
+
+The Analyst Desk is the main Project 2 surface. It accepts football questions and routes them through a strict three-mode policy:
+
+1. `Warehouse-backed football analysis`
+   If the question is football-related and the local DuckDB warehouse contains the needed grain, the app returns:
+   - direct answer
+   - executive summary
+   - question-specific EDA charts
+   - supporting table when relevant
+   - data-backed hypothesis
+   - compact source block
+
+2. `External football fallback`
+   If the question is football-related but outside warehouse coverage, the app performs live external retrieval and returns an external football answer package.
+
+3. `Out-of-context`
+   If the question is not about football/soccer, the app returns an explicit out-of-context response.
+
+This logic lives in [chat_response](scripts/football_ui_service.py), which is called from [build_chat_payload](scripts/app.py).
+
+### Betting Room
+
+The Betting Room is a second, distinct analysis surface. It is not just a static calculator. It performs a runtime mini-pipeline for a selected fixture:
+
+1. collect live or cached league-season match data
+2. assemble a historical training set
+3. estimate match probabilities with a selected model
+4. run model-assumption checks
+5. simulate league context
+6. compare model probabilities to available bookmaker odds
+7. synthesize the findings into a betting hypothesis
+8. write a persistent markdown artifact to disk
+
+The entrypoint is [run_betting_analysis](scripts/betting_room_service.py).
+
+## Assignment Rubric Mapping
+
+## Step 1: Collect
+
+This project satisfies `Collect` through real runtime retrieval from external football data sources. The data is not stored in the prompt and is not a tiny hand-curated CSV.
+
+### Collection Method 1: Runtime Web Retrieval / Crawling
+
+Implemented in:
+
+- [scripts/historical_football_data_to_gcs.py](scripts/historical_football_data_to_gcs.py)
+- [scripts/football_data_to_gcs.py](scripts/football_data_to_gcs.py)
+- [collect_match_data_tool](scripts/betting_room_service.py)
+- [fetch_external_season_matches](scripts/betting_room_service.py)
+- [fetch_runtime_csv](scripts/betting_room_service.py)
+
+What happens:
+
+- the historical script discovers football-data pages
+- parses country pages
+- finds season CSV links
+- downloads the CSVs at runtime
+- normalizes the rows
+- writes warehouse-ready outputs
+
+The incremental script repeats the process for recently affected datasets and supports parallel workers.
+
+The betting page also performs runtime CSV retrieval for selected league-season combinations such as:
 
 ```text
-country=england/
-  league=premier_league/
-    season=2025-2026/
-      league_data.parquet
-  league=championship/
-    season=2025-2026/
-      league_data.parquet
-  league=league_1/
-    season=2025-2026/
-      league_data.parquet
-  league=league_2/
-    season=2025-2026/
-      league_data.parquet
-  league=conference/
-    season=2025-2026/
-      league_data.parquet
+https://www.football-data.co.uk/mmz4281/<season_id>/<league_id>.csv
 ```
 
-Other countries will have their own partition values based on the names used on `football-data.co.uk`, normalized to lowercase with underscores.
+### Collection Method 2: SQL-Style Warehouse Retrieval
 
-## Files
+Implemented in:
 
-- `scripts/app.py`: Main FastAPI application with model-backed chat, DuckDB bootstrap, and zip-style routes.
-- `index.html`: Root landing page for the football analyst UI.
-- `historical_football_data_to_gcs.py`: Full-history backfill into GCS and optional DuckDB.
-- `football_data_to_gcs.py`: Incremental refresh script for the last 1-2 days of activity, suitable for cronjobs or backend-triggered refreshes.
-- `football_eda.py`: Python EDA toolset for the England four-tier dataset in DuckDB, modeled on the reference `data.qmd` workflow.
-- `scripts/football_ui_service.py`: Backend analytics helpers used by the web UI chat and dashboard. The chat layer resolves country and league names from the user question and can analyze the full warehouse.
-- `ui/`: CSS and JS assets for the landing page.
-- `pyproject.toml`: `uv` project definition for local and Docker workflows.
-- `requirements.txt`: Pip-compatible dependency list.
-- `COLUMN_DICTIONARY.md`: Reference for normalized column names and their meanings.
-- `Dockerfile`: Container image for local Docker and Cloud Run deployment.
-- `cloudbuild.yaml`: Cloud Build pipeline for build, push, and Cloud Run deployment.
-- `.gcloudignore`: Files excluded from Cloud Build upload.
-- `evals/`: Deterministic checks for routing and runtime helpers.
-- `.dockerignore`: Keeps local Python and Git artifacts out of the image.
+- [open_connection](scripts/football_ui_service.py)
+- [try_runtime_query_payload](scripts/app.py)
+- the family of warehouse fetchers in [scripts/football_ui_service.py](scripts/football_ui_service.py), including:
+  - `fetch_season_trend_frame`
+  - `fetch_data_quality_frame`
+  - `fetch_correlation_frame`
+  - `fetch_team_season_frame`
+  - `fetch_match_feature_frame`
 
-## Assumption
+What happens:
 
-This implementation assumes "Google Cloud" means Google Cloud Storage. The bucket will not create real folders; it will create object paths that behave like folders in the GCS console.
+- DuckDB is treated as a real analysis warehouse
+- the app opens the database at runtime
+- selects the relevant slice by country / league / season / team
+- executes analytical queries over the `matches` table
 
-## Why DuckDB
+This satisfies the requirement that the dataset is large and abstract enough that it must be queried rather than dumped into model context.
 
-Because the dataset is well under 5 GB, the project also supports DuckDB as a practical runtime analytics layer.
+### Collection Method 3: Live Web Search / Crawl Fallback
 
-- GCS remains the canonical storage layer for partitioned Parquet files.
-- DuckDB provides a lightweight local analytical database that can be queried directly by a backend or UI without sending every request to BigQuery.
-- BigQuery can still be used for cloud analytics or reporting, but DuckDB is a good fit for low-latency runtime queries on a dataset of this size.
+Implemented in:
 
-## Assignment Mapping
+- [scripts/football_web_fallback.py](scripts/football_web_fallback.py)
 
-### Step 1: Collect
+Key functions:
 
-This project satisfies Step 1 through real runtime web collection, not through hard-coded data in the prompt.
+- `search_duckduckgo`
+- `fetch_wikipedia_documents`
+- `crawl_page_text`
+- `hydrate_documents`
+- `build_web_fallback_bundle`
 
-Implemented collection method:
+What happens:
 
-- `Web search / crawling`: the ingestion scripts fetch `https://www.football-data.co.uk/data.php`, follow country pages, discover season CSV links, and download the source files at runtime.
+- for football questions outside warehouse coverage, the app performs runtime search and crawl retrieval
+- collects external snippets and page text
+- packages them into an external football answer
 
-Collect tool calls implemented in code:
+### Why The Dataset Is Non-Trivial
 
-- `python3 historical_football_data_to_gcs.py --bucket ...`
-- `python3 football_data_to_gcs.py --bucket ...`
-- `python3 historical_football_data_to_gcs.py --duckdb-path football_data.duckdb`
-- `python3 football_data_to_gcs.py --duckdb-path football_data.duckdb`
+The project uses a warehouse-sized football dataset with:
 
-What those collect tool calls do:
+- multiple countries
+- multiple leagues
+- many seasons
+- match-level facts
+- result fields
+- goals
+- shots
+- shots on target
+- cards
+- corners
+- referee/time columns
+- bookmaker odds in the betting path when present
 
-- retrieve non-trivial real-world football match data from `football-data.co.uk`
-- parse and normalize the downloaded CSV files
-- store the data in GCS Parquet partitions and/or DuckDB
-- support both full historical backfill and recent incremental refresh
+This is materially different from a tiny bundled example file.
 
-Why this satisfies the requirement:
+## Step 2: Explore and Analyze (EDA)
 
-- the source is real and external
-- the scripts actively fetch data at runtime
-- the dataset is much larger and broader than what should be loaded directly into model context
-- the data are not hand-curated or embedded in the prompt
+This project satisfies `EDA` by explicitly computing over collected data before answering. It does not jump directly from question to unsupported model prose.
 
-### Step 2: Explore and Analyze (EDA)
+### Analyst Desk EDA Pipeline
 
-This project satisfies Step 2 through explicit analytical tool calls over the collected DuckDB data. The agent does not need to jump directly to an answer; it can first inspect, segment, aggregate, and analyze the stored match data.
+Core EDA routing lives in [scripts/football_ui_service.py](scripts/football_ui_service.py).
 
-Implemented EDA method categories:
+#### 1. Domain and Scope Resolution
 
-- `Code execution`: Python executes pandas and DuckDB-based analysis over collected data
-- `Statistical aggregation`: season and league level means, medians, and rates
-- `Filtering and grouping`: result shares, league segmentation, and grouped comparisons
-- `Correlation analysis`: exploratory relationships across numeric match metrics
+- [validate_domain](scripts/football_ui_service.py): checks whether the question is football-related
+- [resolve_scope](scripts/football_ui_service.py): determines the requested country / league / team / season scope
+- [assess_answerability](scripts/football_ui_service.py): checks whether the warehouse can answer the question
 
-EDA tool calls implemented in code:
+#### 2. Intent Detection
 
-- `python3 football_eda.py overview --duckdb-path football_data.duckdb --output-dir artifacts/eda`
-- `python3 football_eda.py aggregate --duckdb-path football_data.duckdb --output-dir artifacts/eda`
-- `python3 football_eda.py segment --duckdb-path football_data.duckdb --output-dir artifacts/eda`
-- `python3 football_eda.py correlation --duckdb-path football_data.duckdb --output-dir artifacts/eda`
-- `python3 football_eda.py missingness --duckdb-path football_data.duckdb --output-dir artifacts/eda`
-- `python3 football_eda.py outliers --duckdb-path football_data.duckdb --output-dir artifacts/eda`
+- [detect_intent](scripts/football_ui_service.py)
+- [heuristic_intent](scripts/football_ui_service.py)
 
-How these map to the assignment:
+Supported warehouse-oriented intents include:
 
-- `overview`: dataset profile and coverage inspection before analysis
-- `aggregate`: qualifying statistical aggregation tool call
-- `segment`: qualifying filtering and grouping tool call
-- `correlation`: qualifying exploratory numeric analysis tool call
-- `missingness`: data-quality EDA over collected data
-- `outliers`: distribution and outlier EDA over collected data
+- `count_lookup`
+- `team_recent_claim`
+- `team_performance`
+- `home_advantage`
+- `correlation`
+- `data_quality`
+- `league_compare`
+- `scoring`
+- `overview`
 
-Minimum Step 2 compliant EDA flow:
+#### 3. Dynamic EDA Planning
 
-1. run `aggregate`
-2. run `segment` or `correlation`
-3. inspect the outputs
-4. then reason about the findings
+- [plan_dynamic_eda_steps](scripts/football_ui_service.py)
+- [suggest_eda_step](scripts/football_ui_service.py)
+- [run_framework_planner_decision](scripts/football_ui_service.py)
 
-This structure makes the EDA phase explicit and tool-driven rather than a direct answer from the model.
+The planner decides which EDA steps are useful for the current slice. The available steps are:
 
-### Framework, Tool Calling, and Multi-Agent Design
+- `trend`
+- `segment`
+- `correlation`
+- `quality`
+- `distribution`
 
-- `Agent framework`: the app now uses `Agno` agents for EDA planning and specialist orchestration, with LiteLLM-backed models underneath.
-- `Real tool calling`: the chat router in `scripts/app.py` uses LiteLLM `tools` plus `tool_choice="auto"` so the model can invoke `run_runtime_query` and `run_analysis_pipeline` as actual function calls.
-- `Distinct specialist agents`: the warehouse EDA path creates role-specific agents for trend, comparison, correlation, quality, and distribution analysis. Each specialist has separate instructions, calls its specialist tool, and runs concurrently.
-- `Grounded hypothesis objects`: the final hypothesis now carries machine-readable `evidence_objects` tied back to profile, trend, correlation, and quality outputs in addition to human-readable evidence bullets.
+This matters for the rubric because the EDA is dynamic. Different user questions can trigger different tools and different evidence pathways.
 
-### Betting Room Add-On
+#### 4. Specialist EDA Tasks
 
-The repo also includes a completely separate betting page at `/betting-room-page`, built from the public `luisgomezordoniez/poisson-football` project and adapted into the current FastAPI app as an additive feature.
+Implemented in [scripts/football_ui_service.py](scripts/football_ui_service.py):
 
-What was ported from that repo:
+- [aggregate_specialist_task](scripts/football_ui_service.py)
+  - computes season-level trend signals
+  - example outputs: goals per match, home-win rate shifts
 
-- `Poisson-family match models`: [scripts/betting_room_service.py](scripts/betting_room_service.py) ports the original repo logic for `estimateParams`, `predictMatch`, `simulateLeague`, `computeTable`, `poissonGoodnessOfFitTest`, `independenceTest`, and `dispersionTest` into Python equivalents such as `estimate_params`, `predict_match_tool`, `simulate_league_tool`, `compute_table`, `poisson_goodness_of_fit_test`, `independence_test`, and `dispersion_test`.
-- `Runtime collection from football-data.co.uk`: [scripts/betting_room_service.py](scripts/betting_room_service.py) implements `collect_match_data_tool`, `fetch_external_season_matches`, and `fetch_runtime_csv`, which fetch season CSVs at runtime and cache artifacts under `artifacts/betting_room/`.
-- `Standalone frontend`: [betting_room.html](betting_room.html), [ui/betting_room.js](ui/betting_room.js), and [ui/betting_room.css](ui/betting_room.css) render a separate betting-room experience with probability bars, exact-score matrix, EDA tests, league-table comparison, and backend tool trace.
-- `Standalone API`: [scripts/app.py](scripts/app.py) adds `/betting-room-page`, `/betting/options`, and `/betting/analyze` as separate additive routes so the existing chat and standings flow stays intact.
+- [segment_specialist_task](scripts/football_ui_service.py)
+  - groups the selected slice by comparison categories
+  - example outputs: league comparisons, latest visible context
 
-How the betting room maps to the homework steps:
+- [correlation_specialist_task](scripts/football_ui_service.py)
+  - computes pairwise metric correlations
+  - example variables:
+    - `total_goals`
+    - `total_shots`
+    - `total_shots_on_target`
+    - `total_corners`
+    - `total_cards`
 
-- `Step 1: Collect`: `collect_match_data_tool` retrieves real league-season data from `football-data.co.uk` at runtime and stores persistent JSON artifacts in `artifacts/betting_room/data/`.
-- `Step 2: Explore and Analyze`: `run_betting_analysis` fans out specialist tools in parallel for probability estimation, assumption testing, and league simulation before aggregating the outputs.
-- `Step 3: Hypothesize`: `build_hypothesis_tool` converts model probabilities, statistical tests, and bookmaker edge comparison into a concrete betting thesis with evidence and caveats.
+- [quality_specialist_task](scripts/football_ui_service.py)
+  - computes missingness / coverage patterns over seasons
+  - example outputs: `hs_missing_pct`, `hst_missing_pct`, referee/time completeness
 
-Specific concepts implemented in the betting room:
+- [distribution_specialist_payload](scripts/football_ui_service.py)
+  - computes spread and percentile summaries for high-variance numeric columns
 
-- `Frontend`: `betting_room.html` + `ui/betting_room.js`
-- `Agent framework`: the main app framework remains `Agno`; the betting room is an additive analytics surface inside the same deployed app
-- `Tool calling`: `run_betting_analysis` executes real backend tools including `collect_match_data_tool`, `predict_match_tool`, `run_assumption_tests_tool`, `simulate_league_tool`, `evaluate_value_bet_tool`, and `build_hypothesis_tool`
-- `Non-trivial dataset`: runtime football-data CSV collection over multiple seasons from `football-data.co.uk`
-- `Multi-agent pattern`: fan-out specialist pattern inside `run_betting_analysis` using parallel probability, assumption-test, and league-simulation specialists
-- `Artifacts`: betting-room cache files and markdown reports are written under `artifacts/betting_room/`
-- `Structured output`: the betting-room API returns structured JSON payloads for the page, including tables, tool traces, score matrices, and hypothesis blocks
-- `Second retrieval method`: the betting room uses runtime web CSV retrieval first and DuckDB as a backup retrieval path
-- `Data visualization`: probability bars, score matrix, and predicted-vs-actual table comparison
-- `Parallel execution`: specialist tools run concurrently inside `run_betting_analysis`
+#### 5. Warehouse-Specific Rendering
 
-## Setup
+- [build_warehouse_charts](scripts/football_ui_service.py)
+- [build_warehouse_hypothesis](scripts/football_ui_service.py)
+- [build_warehouse_executive_summary](scripts/football_ui_service.py)
+- [enrich_warehouse_payload](scripts/football_ui_service.py)
 
-Preferred local workflow with `uv`:
+This is where the app became question-specific rather than generic. A missing-data question now gets missing-data charts and a missing-data hypothesis, while a correlation question gets correlation-oriented outputs.
+
+### Standalone EDA Tool Script
+
+The repository also includes a separate EDA CLI:
+
+- [scripts/football_eda.py](scripts/football_eda.py)
+
+This script uses:
+
+- `duckdb`
+- `pandas`
+- `plotly`
+
+It computes and writes persistent analysis artifacts such as:
+
+- overview summaries
+- aggregate trend views
+- segment comparisons
+- correlation outputs
+- missingness scans
+- outlier/distribution plots
+
+This reinforces the project’s EDA depth beyond the interactive UI.
+
+### Why This Counts As Real EDA
+
+This project meets the EDA requirement because:
+
+- at least one tool call computes over collected data
+- the app adapts to the question
+- the exploration surfaces specific findings
+- those findings feed into the final hypothesis
+
+Examples:
+
+- strongest metric pair and correlation coefficient
+- early-vs-recent shot missingness change
+- home advantage trend shift
+- team performance movement over seasons
+
+## Step 3: Hypothesize
+
+This project satisfies `Hypothesize` by building grounded claims from the EDA outputs.
+
+### Analyst Desk Hypothesis Path
+
+Implemented in:
+
+- [build_warehouse_hypothesis](scripts/football_ui_service.py)
+- [build_warehouse_executive_summary](scripts/football_ui_service.py)
+- [generate_model_answer](scripts/app.py)
+
+The hypothesis is not raw LLM improvisation. It is assembled from:
+
+- the selected warehouse slice
+- computed aggregates
+- detected trend changes
+- correlation outputs
+- completeness / quality signals
+
+Typical hypothesis components:
+
+- a title
+- a short statement
+- evidence bullets
+- confidence
+- caveats
+
+### Betting Room Hypothesis Path
+
+Implemented in:
+
+- [build_hypothesis_tool](scripts/betting_room_service.py)
+- [write_analysis_artifact](scripts/betting_room_service.py)
+
+The betting hypothesis uses:
+
+- expected goals
+- win/draw/loss probabilities
+- most likely score
+- size of historical training data
+- dispersion caveats
+- bookmaker edge comparison when odds are available
+
+This is a direct data-backed “so what?” layer, which is exactly what the hypothesis stage is supposed to produce.
+
+## Core Requirements
+
+### Frontend
+
+Implemented.
+
+Primary UI files:
+
+- [frontend/templates/index.html](frontend/templates/index.html)
+- [frontend/static/js/app.js](frontend/static/js/app.js)
+- [frontend/templates/standings.html](frontend/templates/standings.html)
+- [frontend/static/js/standings.js](frontend/static/js/standings.js)
+- [frontend/templates/betting_room.html](frontend/templates/betting_room.html)
+- [frontend/static/js/betting_room.js](frontend/static/js/betting_room.js)
+
+Frontend behavior includes:
+
+- question submission
+- chat history rendering
+- question-specific chart rendering
+- background refresh polling
+- standings interaction
+- betting model selection
+- probability and test visualization
+
+### Agent Framework
+
+Implemented with `Agno`.
+
+Evidence:
+
+- dependency in [pyproject.toml](pyproject.toml)
+- imports in [scripts/football_ui_service.py](scripts/football_ui_service.py):
+  - `from agno.agent import Agent as AgnoAgent`
+  - `from agno.models.litellm import LiteLLM as AgnoLiteLLM`
+
+Framework-specific functions:
+
+- [framework_agents_enabled](scripts/football_ui_service.py)
+- [build_agno_model](scripts/football_ui_service.py)
+- [run_framework_planner_decision](scripts/football_ui_service.py)
+- [run_framework_specialist_agent](scripts/football_ui_service.py)
+
+Framework-backed agent roles:
+
+- `EDA Planner Agent`
+- `Trend Detector Agent`
+- `Comparison Analyst Agent`
+- `Relationship Analyst Agent`
+- `Coverage Analyst Agent`
+- `Distribution Analyst Agent`
+
+These roles use distinct prompts and responsibilities, which helps satisfy the multi-agent requirement in a traceable way.
+
+### Tool Calling
+
+Implemented in two layers.
+
+#### Layer 1: LLM Tool Calling In The Analyst Desk
+
+Implemented in [scripts/app.py](scripts/app.py).
+
+Key pieces:
+
+- [TOOL_ROUTER_SYSTEM_PROMPT](scripts/app.py)
+- [llm_tool_definitions](scripts/app.py)
+- [execute_llm_tool_call](scripts/app.py)
+- [try_tool_calling_chat_payload](scripts/app.py)
+
+The router can choose between:
+
+- `run_runtime_query`
+- `run_analysis_pipeline`
+
+This is a genuine tool-routing layer, not just hard-coded branching.
+
+#### Layer 2: Backend Analysis Tools
+
+Analyst tools:
+
+- [aggregate_specialist_task](scripts/football_ui_service.py)
+- [segment_specialist_task](scripts/football_ui_service.py)
+- [correlation_specialist_task](scripts/football_ui_service.py)
+- [quality_specialist_task](scripts/football_ui_service.py)
+
+Betting tools:
+
+- [collect_match_data_tool](scripts/betting_room_service.py)
+- [predict_match_tool](scripts/betting_room_service.py)
+- [run_assumption_tests_tool](scripts/betting_room_service.py)
+- [simulate_league_tool](scripts/betting_room_service.py)
+- [evaluate_value_bet_tool](scripts/betting_room_service.py)
+- [build_hypothesis_tool](scripts/betting_room_service.py)
+
+### Non-Trivial Dataset
+
+Implemented.
+
+Primary source:
+
+- `football-data.co.uk`
+
+Warehouse and retrieval files:
+
+- [scripts/historical_football_data_to_gcs.py](scripts/historical_football_data_to_gcs.py)
+- [scripts/football_data_to_gcs.py](scripts/football_data_to_gcs.py)
+- [scripts/football_ui_service.py](scripts/football_ui_service.py)
+- [scripts/betting_room_service.py](scripts/betting_room_service.py)
+
+The system explicitly treats the data as a warehouse and runs query-time analytics over it.
+
+### Multi-Agent Pattern
+
+Implemented in two strong forms.
+
+#### Pattern 1: Orchestrator -> Specialist Analysts
+
+In [scripts/football_ui_service.py](scripts/football_ui_service.py):
+
+- orchestrator: [plan_dynamic_eda_steps](scripts/football_ui_service.py)
+- optional framework planner: [run_framework_planner_decision](scripts/football_ui_service.py)
+- specialist execution: [run_framework_specialist_agent](scripts/football_ui_service.py)
+
+This is a classic orchestrator-handoff pattern:
+
+- planner chooses the next EDA steps
+- specialist roles execute focused analytical responsibilities
+- outputs are aggregated into one final hypothesis package
+
+#### Pattern 2: Fan-Out Parallel Specialists In Betting Room
+
+In [run_betting_analysis](scripts/betting_room_service.py):
+
+- `probability_specialist`
+- `assumption_specialist`
+- `league_specialist`
+
+These run concurrently via:
+
+```python
+with ThreadPoolExecutor(max_workers=3) as executor:
+```
+
+This is a clear parallel multi-agent / multi-specialist pattern.
+
+### Deployed
+
+The repository includes a full deployment path for Google Cloud Run.
+
+Evidence:
+
+- [Dockerfile](Dockerfile)
+- [cloudbuild.yaml](cloudbuild.yaml)
+- [scripts/app.py](scripts/app.py)
+
+Cloud build steps:
+
+- build image
+- push image
+- deploy service `footy-agent` to Cloud Run
+
+For grading, the live submitted URL should point to this running application.
+
+### README
+
+This README now documents:
+
+- the three assignment steps
+- the exact code locations for each requirement
+- the system architecture
+- the tool-calling layer
+- the multi-agent patterns
+- the betting room math and analysis pipeline
+
+## Grab-Bag Concepts
+
+This project implements more than the required two elective concepts.
+
+### 1. Parallel Execution
+
+Implemented.
+
+Evidence:
+
+- [run_dynamic_eda](scripts/football_ui_service.py)
+- [run_betting_analysis](scripts/betting_room_service.py)
+
+Parallelism is used to reduce latency and to aggregate independent specialist outputs.
+
+### 2. Structured Output
+
+Implemented.
+
+API schemas in [scripts/app.py](scripts/app.py):
+
+- `ChatRequest`
+- `ChatResponse`
+- `BettingRoomRequest`
+- `RefreshRequest`
+- `RefreshResponse`
+- `RefreshStatusResponse`
+
+Framework schemas in [scripts/football_ui_service.py](scripts/football_ui_service.py):
+
+- `EdaPlannerDecision`
+- `SpecialistDigest`
+
+Structured payloads are also used for:
+
+- charts
+- tables
+- highlights
+- hypothesis blocks
+- source cards
+- tool traces
+
+### 3. Artifacts
+
+Implemented.
+
+Persistent artifact generation:
+
+- [write_analysis_artifact](scripts/betting_room_service.py): writes markdown reports for betting analyses
+- [scripts/football_eda.py](scripts/football_eda.py): writes Plotly HTML artifacts and analysis outputs under `artifacts/eda`
+- betting-room runtime data cache also persists under `artifacts/betting_room/data`
+
+### 4. Second Data Retrieval Method
+
+Implemented.
+
+This project uses multiple retrieval modes:
+
+- external CSV retrieval from `football-data.co.uk`
+- DuckDB query-time retrieval
+- live web search and crawl fallback
+
+### 5. Data Visualization
+
+Implemented.
+
+Backend chart constructors in [scripts/football_ui_service.py](scripts/football_ui_service.py):
+
+- `line_chart`
+- `bar_chart`
+- `area_chart`
+- `dumbbell_chart`
+- `heatmap_chart`
+
+Warehouse chart selection:
+
+- [build_warehouse_charts](scripts/football_ui_service.py)
+
+Frontend rendering:
+
+- [renderCharts](frontend/static/js/app.js)
+
+Betting Room visualizations:
+
+- probability bars
+- exact-score heatmap
+- assumption-check cards
+- predicted-vs-actual table comparison
+- backend tool trace
+
+### 6. Code Execution
+
+Implemented.
+
+The project performs real runtime code execution using:
+
+- DuckDB SQL execution
+- pandas transformations
+- mathematical probability calculations
+- statistical tests
+- Plotly artifact generation
+
+This is visible in:
+
+- [scripts/football_ui_service.py](scripts/football_ui_service.py)
+- [scripts/betting_room_service.py](scripts/betting_room_service.py)
+- [scripts/football_eda.py](scripts/football_eda.py)
+
+## Analyst Desk: Technical Architecture
+
+### Chat Request Lifecycle
+
+1. `POST /chat` receives the message
+2. [build_chat_payload](scripts/app.py) optionally resolves short-term context from the last five turns
+3. [try_tool_calling_chat_payload](scripts/app.py) lets the model choose the right tool path
+4. if a direct query is appropriate, [try_runtime_query_payload](scripts/app.py) builds a DuckDB query
+5. otherwise [chat_response](scripts/football_ui_service.py) runs the full football analysis pipeline
+6. [generate_model_answer](scripts/app.py) turns the structured result into the final answer text
+
+### Runtime Query Path
+
+The narrow SQL-answerable path is implemented in [scripts/app.py](scripts/app.py).
+
+Key prompts:
+
+- `QUERY_PLANNER_SYSTEM_PROMPT`
+- `QUERY_SUMMARY_SYSTEM_PROMPT`
+
+Important properties:
+
+- read-only SQL only
+- only the `matches` table
+- direct factual questions
+- concise query results summarized back to the user
+
+### Football Analysis Path
+
+The broader warehouse path is implemented in [chat_response](scripts/football_ui_service.py).
+
+Main stages:
+
+1. domain validation
+2. football scope resolution
+3. answerability check
+4. question intent classification
+5. warehouse or external path selection
+6. question-specific chart / summary / hypothesis generation
+
+### Short-Term Conversational Memory
+
+The Analyst Desk also keeps a short rolling memory of the last five turns for scope carryover.
+
+Implemented in:
+
+- [ChatRequest](scripts/app.py): `history`
+- [resolve_message_with_recent_context](scripts/football_ui_service.py)
+- [scope_from_history_entry](scripts/football_ui_service.py)
+- [apply_recent_scope](scripts/football_ui_service.py)
+- [frontend/static/js/app.js](frontend/static/js/app.js): sends last five turns with the chat request
+
+This is used for vague follow-ups like:
+
+- `here`
+- `that league`
+- `this team`
+- `what about that one`
+
+## Betting Room: Technical And Mathematical Detail
+
+The betting page is intentionally more mathematical and tool-heavy than the main chat flow.
+
+### Betting Models Implemented
+
+The selectable models are defined in [MODEL_NAMES](scripts/betting_room_service.py):
+
+- `Maher`
+- `Dixon-Coles`
+- `Dixon-Coles TD`
+- `Bivariate Poisson`
+- `Negative Binomial`
+
+### Data Collection In Betting Room
+
+Implemented in:
+
+- [collect_match_data_tool](scripts/betting_room_service.py)
+- [fetch_external_season_matches](scripts/betting_room_service.py)
+- [fetch_duckdb_season_matches](scripts/betting_room_service.py)
+
+Behavior:
+
+- fetch chosen season from external CSV if available
+- cache normalized matches under `artifacts/betting_room/data`
+- fall back to DuckDB warehouse when necessary
+- assemble current-season and historical training data across multiple seasons
+
+### Mathematical Building Blocks
+
+Implemented in [scripts/betting_room_service.py](scripts/betting_room_service.py):
+
+- `poisson_pmf`
+- `neg_bin_pmf`
+- `bivariate_poisson_pmf`
+- `dixon_coles_tau`
+- [random_poisson](scripts/betting_room_service.py)
+- [estimate_params](scripts/betting_room_service.py)
+- [estimate_rho](scripts/betting_room_service.py)
+- [estimate_lambda_three](scripts/betting_room_service.py)
+- [estimate_dispersion](scripts/betting_room_service.py)
+- [build_matrix](scripts/betting_room_service.py)
+
+#### Maher Model
+
+The Maher-style model assumes independent home and away goal counts, with team attack/defense strengths and a home-advantage term.
+
+The implemented expected goals are of the form:
+
+```text
+lambda_home = attack_home * defense_away * exp(home_adv)
+lambda_away = attack_away * defense_home
+```
+
+This path is selected in [predict_from_params](scripts/betting_room_service.py) when `model_name == "Maher"`.
+
+#### Dixon-Coles Model
+
+The Dixon-Coles version starts from the independent Poisson structure and then adjusts low-score outcomes using a correlation correction term `rho` via `dixon_coles_tau`.
+
+This is appropriate because football scores are often sparse and low-score dependence matters.
+
+Implemented in:
+
+- [estimate_rho](scripts/betting_room_service.py)
+- [dixon_coles_tau](scripts/betting_room_service.py)
+- [predict_from_params](scripts/betting_room_service.py)
+
+#### Dixon-Coles TD
+
+`TD` means time-decay. Older matches are downweighted using:
+
+```text
+weight_i = exp(-xi * age_index)
+```
+
+Implemented in:
+
+- [predict_match_tool](scripts/betting_room_service.py)
+- [simulate_league_tool](scripts/betting_room_service.py)
+
+This lets recent form influence parameter estimation more than stale historical matches.
+
+#### Bivariate Poisson
+
+The Bivariate Poisson model adds a shared latent component `lambda_three` so home and away goals can co-move rather than being fully independent.
+
+Implemented in:
+
+- [bivariate_poisson_pmf](scripts/betting_room_service.py)
+- [estimate_lambda_three](scripts/betting_room_service.py)
+- [predict_from_params](scripts/betting_room_service.py)
+
+This is useful when a fixture’s two scorelines share common intensity.
+
+#### Negative Binomial
+
+The Negative Binomial path handles over-dispersion better than the pure Poisson family when goal variance exceeds the mean.
+
+Implemented in:
+
+- `neg_bin_pmf`
+- [estimate_dispersion](scripts/betting_room_service.py)
+- [predict_from_params](scripts/betting_room_service.py)
+
+This is especially relevant when the training data is more variable than a Poisson assumption can comfortably explain.
+
+### Statistical Tests In Betting Room
+
+The betting page explicitly runs test-like analytical tools before building the thesis.
+
+Implemented in:
+
+- [poisson_goodness_of_fit_test](scripts/betting_room_service.py)
+- [independence_test](scripts/betting_room_service.py)
+- [dispersion_test](scripts/betting_room_service.py)
+- [run_assumption_tests_tool](scripts/betting_room_service.py)
+
+What they do:
+
+- `GOF`: checks whether observed goal counts are plausibly consistent with a Poisson-style distribution
+- `Independence`: checks whether home and away goal outcomes behave independently enough for the simpler models
+- `Dispersion`: checks whether the variance-to-mean relationship suggests under/over-dispersion
+
+These are surfaced in the Betting Room UI as `Model Assumption Checks`.
+
+### League Simulation Tool
+
+Implemented in [simulate_league_tool](scripts/betting_room_service.py).
+
+What it does:
+
+- uses the fitted model to generate score expectations for fixtures
+- builds a predicted league table
+- compares predicted top teams against the actual observed table
+
+This gives the fixture prediction broader context rather than leaving it as an isolated scoreline.
+
+### Market Edge Tool
+
+Implemented in [evaluate_value_bet_tool](scripts/betting_room_service.py).
+
+What it does:
+
+- extracts bookmaker odds when available
+- converts odds to implied probabilities
+- normalizes the overround
+- compares market-implied probabilities with model probabilities
+- identifies the strongest edge
+- computes fair odds
+
+The core logic is:
+
+```text
+edge = model_probability - market_implied_probability
+fair_odds = 1 / model_probability
+```
+
+This is then used by the hypothesis builder.
+
+### Betting Hypothesis Synthesis
+
+Implemented in [build_hypothesis_tool](scripts/betting_room_service.py).
+
+This tool combines:
+
+- expected goals
+- win/draw/loss probabilities
+- most likely score
+- training set size
+- statistical caveats
+- market edge if present
+
+It returns a structured object with:
+
+- `title`
+- `statement`
+- `confidence`
+- `evidence`
+- `caveats`
+- `next_checks`
+
+### Betting Room Multi-Agent Fan-Out
+
+`run_betting_analysis` uses a clean specialist fan-out pattern:
+
+- `probability_specialist`
+- `assumption_specialist`
+- `league_specialist`
+
+These run in parallel and return both:
+
+- machine-usable result payloads
+- human-readable tool trace summaries
+
+After that, the pipeline adds:
+
+- `market_edge`
+- `simulate_match`
+- `betting_hypothesis`
+
+### Betting Room Artifact Generation
+
+Implemented in [write_analysis_artifact](scripts/betting_room_service.py).
+
+Persistent outputs include:
+
+- markdown report file
+- cached runtime data files
+
+These live under:
+
+- `artifacts/betting_room/data`
+- `artifacts/betting_room/reports`
+
+## Visualization Layer
+
+### Analyst Desk Visualizations
+
+The main analyst page renders multiple chart types depending on the question:
+
+- line charts
+- bar charts
+- heatmaps / pressure maps
+- question-specific comparison charts
+
+Chart constructors are implemented in [scripts/football_ui_service.py](scripts/football_ui_service.py).
+
+Chart rendering lives in [frontend/static/js/app.js](frontend/static/js/app.js).
+
+### Betting Room Visualizations
+
+Rendered in [frontend/static/js/betting_room.js](frontend/static/js/betting_room.js):
+
+- probability bars for home/draw/away
+- exact score matrix heatmap
+- assumption-check cards
+- predicted-vs-actual table comparison
+- backend tool trace panel
+
+## Deployment
+
+The application is packaged for Cloud Run.
+
+### Container
+
+Implemented in [Dockerfile](Dockerfile):
+
+- uses Python 3.12 slim
+- installs dependencies via `uv`
+- starts `uvicorn`
+
+### Cloud Build
+
+Implemented in [cloudbuild.yaml](cloudbuild.yaml):
+
+- build Docker image
+- push image to GCR
+- deploy service `footy-agent`
+
+The submitted assignment URL should point to the deployed service produced from this pipeline.
+
+## Running Locally
+
+Install dependencies:
 
 ```bash
 uv sync
 ```
 
-Alternative pip workflow:
+Alternative:
 
 ```bash
 python3 -m pip install -r requirements.txt
 ```
 
-Authenticate to Google Cloud with one of these options:
-
-Option A: Application Default Credentials
+Run:
 
 ```bash
-gcloud auth application-default login
+uv run uvicorn app:app --reload
 ```
 
-Option B: service account JSON key
+Open in a browser:
 
-Use the `--credentials-file` flag when you run the script.
+- `http://127.0.0.1:8000/`
+- `http://127.0.0.1:8000/standings-page`
+- `http://127.0.0.1:8000/betting-room-page`
 
-## App Runtime Configuration
+## Environment Variables
 
-Create a local `.env` file if you want model/runtime configuration without exporting env vars manually.
-
-Core app env vars:
+Core variables:
 
 - `MODEL`
 - `LITELLM_API_BASE`
@@ -226,411 +986,83 @@ Core app env vars:
 - `DUCKDB_PATH`
 - `DUCKDB_GCS_URI`
 - `SYNC_DUCKDB_FROM_GCS`
-- `MAX_MESSAGE_CHARS`
 - `MODEL_TIMEOUT_SECONDS`
 
-Recommended Vertex AI config for local and Cloud Run:
+Typical example:
 
 ```env
 MODEL=vertex_ai/gemini-2.5-flash-lite
 DUCKDB_PATH=football_data.duckdb
 ```
 
-Recommended Ollama config for local use:
+## Refresh Workflow
 
-```env
-MODEL=ollama/llama3.1
-LITELLM_API_BASE=http://localhost:11434
-DUCKDB_PATH=football_data.duckdb
-```
+The project also includes a non-blocking refresh architecture for the warehouse.
 
-If you deploy without bundling a local DuckDB file, set:
+Implemented in [scripts/app.py](scripts/app.py):
 
-```env
-DUCKDB_GCS_URI=gs://your-bucket/path/to/football_data.duckdb
-DUCKDB_PATH=/tmp/football_data.duckdb
-SYNC_DUCKDB_FROM_GCS=true
-```
+- `POST /refresh`
+- `GET /refresh/{job_id}`
+- [run_refresh_job](scripts/app.py)
 
-## Usage
+Behavior:
 
-### 1. Full Historical Backfill
+- the request enqueues a background job
+- a daemon thread runs the refresh subprocess
+- the UI polls job status
+- the endpoint no longer blocks the web request while data sync runs
 
-Upload every discovered country, league, and season into a bucket:
+## Example Questions
 
-```bash
-python3 historical_football_data_to_gcs.py --bucket your-gcs-bucket
-```
+Warehouse-backed questions:
 
-Upload only selected countries and seasons:
+- `How has home advantage changed over time in La Liga?`
+- `Which columns have the most missing data by season in the Premier League?`
+- `Show me the strongest metric correlations in Serie A.`
+- `Compare Bundesliga and Serie A on scoring trends.`
+- `How complete is referee data in Ligue 1?`
 
-```bash
-python3 historical_football_data_to_gcs.py \
-  --bucket your-gcs-bucket \
-  --countries England,Spain,USA \
-  --seasons 2025-2026,2024-2025
-```
+External football fallback questions:
 
-Write into a prefix inside the bucket:
+- `What is offside?`
+- `Which football league has the highest revenue?`
 
-```bash
-python3 historical_football_data_to_gcs.py \
-  --bucket your-gcs-bucket \
-  --bucket-prefix raw/football-data
-```
+Out-of-context examples:
 
-Dry run without downloading or uploading files:
+- `What is the weather in New York today?`
+- `Summarize Bitcoin prices this week.`
 
-```bash
-python3 historical_football_data_to_gcs.py \
-  --dry-run \
-  --countries England \
-  --seasons 2025-2026
-```
+## Notes For Graders
 
-Use a service account key directly:
+If you want the fastest way to verify rubric coverage, inspect these files in order:
 
-```bash
-python3 historical_football_data_to_gcs.py \
-  --bucket your-gcs-bucket \
-  --credentials-file /path/to/service-account.json \
-  --project-id your-gcp-project
-```
+1. [scripts/app.py](scripts/app.py)
+   This shows the FastAPI app, Pydantic schemas, tool-calling router, refresh jobs, and public routes.
 
-Build a runtime DuckDB database during the backfill:
+2. [scripts/football_ui_service.py](scripts/football_ui_service.py)
+   This shows the main analyst workflow: scope resolution, answerability checks, EDA planning, specialist tasks, chart generation, and warehouse hypotheses.
 
-```bash
-python3 historical_football_data_to_gcs.py \
-  --bucket your-gcs-bucket \
-  --project-id your-gcp-project \
-  --duckdb-path football_data.duckdb
-```
+3. [scripts/betting_room_service.py](scripts/betting_room_service.py)
+   This shows the runtime collection path, Poisson-family modeling, statistical tests, market-edge logic, parallel specialist execution, and artifact generation.
 
-### 2. Incremental Recent Refresh
+4. [frontend/templates/index.html](frontend/templates/index.html) and [frontend/static/js/app.js](frontend/static/js/app.js)
+   This shows the interactive analyst UI and chart rendering.
 
-Refresh only partitions with match rows from the last 2 days:
+5. [frontend/templates/betting_room.html](frontend/templates/betting_room.html) and [frontend/static/js/betting_room.js](frontend/static/js/betting_room.js)
+   This shows the separate betting analysis page, including the tool trace and model-assumption display.
+
+6. [cloudbuild.yaml](cloudbuild.yaml) and [Dockerfile](Dockerfile)
+   This shows the deployment pipeline.
+
+## Testing
+
+Repository tests:
 
 ```bash
-python3 football_data_to_gcs.py \
-  --bucket your-gcs-bucket \
-  --project-id your-gcp-project \
-  --duckdb-path football_data.duckdb
+uv run pytest
 ```
 
-Refresh only the last day:
+Available test files:
 
-```bash
-python3 football_data_to_gcs.py \
-  --bucket your-gcs-bucket \
-  --project-id your-gcp-project \
-  --duckdb-path football_data.duckdb \
-  --lookback-days 1
-```
-
-Increase parallelism for faster country discovery and refresh:
-
-```bash
-python3 football_data_to_gcs.py \
-  --bucket your-gcs-bucket \
-  --project-id your-gcp-project \
-  --duckdb-path football_data.duckdb \
-  --workers 8
-```
-
-Run the incremental refresh for selected countries:
-
-```bash
-python3 football_data_to_gcs.py \
-  --bucket your-gcs-bucket \
-  --project-id your-gcp-project \
-  --countries England,Spain \
-  --duckdb-path football_data.duckdb
-```
-
-### 3. Python EDA Tools
-
-The `football_eda.py` script is organized as assignment-style EDA tool calls over collected DuckDB data. It focuses on the England four-tier dataset (`E0`-`E3`) because that is the cleanest comparable slice for long-range analysis.
-
-Tool-call mapping:
-
-- `overview`: dataset profile and coverage snapshot
-- `aggregate`: statistical aggregation over league/season groups
-- `segment`: filtering and grouping analysis for league-level comparisons and result composition
-- `correlation`: correlation analysis across match metrics
-- `missingness`: data-quality completeness analysis
-- `outliers`: distribution and outlier analysis
-
-Run the full EDA bundle:
-
-```bash
-python3 football_eda.py all \
-  --duckdb-path football_data.duckdb \
-  --output-dir artifacts/eda
-```
-
-Run only the dataset overview tool:
-
-```bash
-python3 football_eda.py overview \
-  --duckdb-path football_data.duckdb \
-  --output-dir artifacts/eda
-```
-
-Run the statistical aggregation tool:
-
-```bash
-python3 football_eda.py aggregate \
-  --duckdb-path football_data.duckdb \
-  --output-dir artifacts/eda
-```
-
-Run the filtering and grouping tool:
-
-```bash
-python3 football_eda.py segment \
-  --duckdb-path football_data.duckdb \
-  --output-dir artifacts/eda
-```
-
-Run the correlation tool:
-
-```bash
-python3 football_eda.py correlation \
-  --duckdb-path football_data.duckdb \
-  --output-dir artifacts/eda
-```
-
-Run the missing-values tool:
-
-```bash
-python3 football_eda.py missingness \
-  --duckdb-path football_data.duckdb \
-  --output-dir artifacts/eda
-```
-
-Run only the outlier tool and distribution checks:
-
-```bash
-python3 football_eda.py outliers \
-  --duckdb-path football_data.duckdb \
-  --output-dir artifacts/eda \
-  --distribution-columns fthg,hr,ar
-```
-
-Limit the EDA to selected seasons:
-
-```bash
-python3 football_eda.py all \
-  --duckdb-path football_data.duckdb \
-  --output-dir artifacts/eda_recent \
-  --seasons 2023-2024,2024-2025,2025-2026
-```
-
-### 4. Football Analyst UI
-
-The web app is chat-first. The landing page keeps the assistant in the center and uses compact side panels for dataset coverage, league snapshots, active EDA modules, and analyst workflow context.
-
-Run the UI locally:
-
-```bash
-uv run uvicorn scripts.app:app --reload
-```
-
-Then open:
-
-```text
-http://127.0.0.1:8000
-```
-
-Implemented UI endpoints:
-
-- `GET /`: serves the landing page
-- `GET /health`: simple health check
-- `GET /stats`: returns dashboard cards, prompt chips, spotlight stats, runtime metadata, and tool metadata
-- `GET /standings`: returns a computed latest-season standings table for the selected country and league
-- `POST /refresh`: enqueues a background refresh job and returns `202 Accepted` with a job id
-- `GET /refresh/{job_id}`: returns refresh job status, timestamps, and recent log tail
-- `POST /chat`: runs the full analyst pipeline for every question:
-  1. domain validation
-  2. warehouse retrieval from DuckDB if coverage exists
-  3. web search + crawling + ranked snippet retrieval if warehouse coverage is missing
-  4. EDA over the retrieved evidence with charts
-  5. a final evidence-backed hypothesis and answer
-- `GET /api/health`, `GET /api/dashboard`, `GET /api/standings`, `POST /api/refresh`, `GET /api/refresh/{job_id}`, and `POST /api/chat`: backward-compatible aliases
-
-Current chat analysis modes:
-
-- home advantage trend analysis
-- league comparison analysis
-- scoring trend analysis
-- correlation analysis
-- data-quality analysis
-- general dataset overview
-
-The chat app is no longer limited to the England four-tier slice. Questions like `Analyze La Liga`, `Compare Spain leagues`, or `How has home advantage changed in Serie A?` are resolved against the corresponding country and league in DuckDB. The standalone `football_eda.py` script still focuses on England `E0-E3`.
-
-Current question flow:
-
-1. `Domain Validation`: reject non-football questions through explicit out-of-context handling.
-2. `Warehouse Retrieval`: resolve the country/league/season from the question and fetch the matching DuckDB slice.
-3. `Fallback Retrieval`: if the warehouse does not have the requested football topic, switch to web search and crawling, then rank the crawled text snippets with a lightweight RAG-style retriever.
-4. `EDA`: run parallel specialist sub-agents over the retrieved evidence. For warehouse-backed questions, the app launches aggregate, segment, correlation, and quality specialists in parallel, then combines their outputs into charts, tables, and supporting evidence.
-5. `Hypothesis`: produce a final analytical claim with explicit supporting evidence bullets instead of only a conversational answer.
-
-The frontend is intentionally lightweight:
-
-- main focus is the chatbot
-- supporting panels surface useful analyst context
-- chat responses display tool calls, highlight metrics, EDA charts with captions, compact result tables, source cards, and the final hypothesis block
-
-### 5. Deploy to Google Cloud Run
-
-Build and deploy with Cloud Build:
-
-```bash
-gcloud auth login
-gcloud config set project YOUR_PROJECT_ID
-gcloud services enable cloudbuild.googleapis.com run.googleapis.com
-gcloud builds submit .
-```
-
-The included `cloudbuild.yaml`:
-
-- builds `gcr.io/$PROJECT_ID/footy-agent`
-- pushes the image
-- deploys Cloud Run service `footy-agent` in `us-central1`
-- sets `MODEL=vertex_ai/gemini-2.5-flash-lite`
-
-For Vertex AI on Cloud Run, make sure the service account has `Vertex AI User` (`roles/aiplatform.user`).
-
-## Environment Variables
-
-The ingestion scripts are container-friendly and can be configured through environment variables instead of CLI flags. CLI flags override environment variables when both are set.
-
-- `FOOTBALL_DATA_BUCKET`
-- `FOOTBALL_DATA_BUCKET_PREFIX`
-- `FOOTBALL_DATA_COUNTRIES`
-- `FOOTBALL_DATA_SEASONS`
-- `FOOTBALL_DATA_PROJECT_ID`
-- `FOOTBALL_DATA_CREDENTIALS_FILE`
-- `FOOTBALL_DATA_OBJECT_NAME`
-- `FOOTBALL_DATA_DUCKDB_PATH`
-- `FOOTBALL_DATA_DUCKDB_TABLE`
-- `FOOTBALL_DATA_LOOKBACK_DAYS`
-- `FOOTBALL_DATA_WORKERS`
-- `FOOTBALL_DATA_SKIP_EXISTING`
-- `FOOTBALL_DATA_DRY_RUN`
-- `FOOTBALL_DATA_TIMEOUT`
-- `FOOTBALL_DATA_LOG_LEVEL`
-
-It also respects standard Google Cloud auth environment variables:
-
-- `GOOGLE_APPLICATION_CREDENTIALS`
-- `GOOGLE_CLOUD_PROJECT`
-- `GCP_PROJECT`
-
-Example:
-
-```bash
-export FOOTBALL_DATA_BUCKET=your-gcs-bucket
-export FOOTBALL_DATA_BUCKET_PREFIX=raw/football-data
-export FOOTBALL_DATA_COUNTRIES=England,Spain,USA
-export FOOTBALL_DATA_DUCKDB_PATH=football_data.duckdb
-python3 football_data_to_gcs.py
-```
-
-## Docker
-
-Build the image:
-
-```bash
-docker build -t football-data-gcs .
-```
-
-Run it with environment variables:
-
-```bash
-docker run --rm \
-  -e FOOTBALL_DATA_BUCKET=your-gcs-bucket \
-  -e FOOTBALL_DATA_BUCKET_PREFIX=raw/football-data \
-  -e FOOTBALL_DATA_COUNTRIES=England,Spain \
-  -e FOOTBALL_DATA_DUCKDB_PATH=/data/football_data.duckdb \
-  -v "$(pwd)/data:/data" \
-  football-data-gcs
-```
-
-The default container command runs the incremental refresh script. To run the full historical backfill instead:
-
-```bash
-docker run --rm \
-  -e FOOTBALL_DATA_BUCKET=your-gcs-bucket \
-  -e FOOTBALL_DATA_DUCKDB_PATH=/data/football_data.duckdb \
-  -v "$(pwd)/data:/data" \
-  football-data-gcs \
-  historical_football_data_to_gcs.py
-```
-
-Run it with a mounted service account key locally:
-
-```bash
-docker run --rm \
-  -e FOOTBALL_DATA_BUCKET=your-gcs-bucket \
-  -e GOOGLE_APPLICATION_CREDENTIALS=/var/secrets/google/service-account.json \
-  -v /path/to/service-account.json:/var/secrets/google/service-account.json:ro \
-  football-data-gcs
-```
-
-Run a dry run in Docker:
-
-```bash
-docker run --rm \
-  -e FOOTBALL_DATA_DRY_RUN=true \
-  -e FOOTBALL_DATA_COUNTRIES=England \
-  -e FOOTBALL_DATA_SEASONS=2025-2026 \
-  football-data-gcs
-```
-
-## Google Cloud Deployment
-
-This image is compatible with Google Cloud batch-style runtimes. `Cloud Run Jobs` is the natural fit because both scripts run to completion and exit.
-
-For Google Cloud deployment:
-
-- Push the built image to Artifact Registry or another container registry Google Cloud can read.
-- Attach a Google Cloud service account to the runtime instead of baking credentials into the image.
-- Grant that service account permission to write to the target bucket, typically Storage object creation or admin permissions depending on your workflow.
-- Set the `FOOTBALL_DATA_*` environment variables on the job.
-- For UI-triggered refreshes, call `football_data_to_gcs.py` from the backend when the user clicks refresh.
-- Do not rely on local key files in production unless you have a specific reason. Application Default Credentials from the attached service account are cleaner and safer.
-
-## Useful Flags
-
-- `--countries`: Comma-separated country filter.
-- `--seasons`: Comma-separated season filter in `YYYY-YYYY` format.
-- `--bucket-prefix`: Optional prefix inside the bucket.
-- `--duckdb-path`: Optional local DuckDB database file for runtime usage.
-- `--duckdb-table`: Target DuckDB table name. Defaults to `matches`.
-- `--lookback-days`: Incremental refresh window used by `football_data_to_gcs.py`.
-- `--skip-existing`: Skip objects that already exist.
-- `--object-name`: Change the file name from `league_data.parquet` if needed.
-- `--dry-run`: Print target object paths only.
-- `--timeout`: Override the HTTP timeout in seconds.
-- `--log-level`: One of `DEBUG`, `INFO`, `WARNING`, `ERROR`.
-
-## Notes
-
-- The scraper starts from `https://www.football-data.co.uk/data.php`, then follows each country page and discovers season-specific CSV links.
-- Each source CSV is converted in memory to Parquet before upload.
-- Historical source files with ragged rows are normalized before conversion so older seasons with blank rows or inconsistent trailing commas still load correctly.
-- Column names are normalized to lowercase snake_case for BigQuery compatibility. Special characters are converted to readable tokens where possible, for example `B365>2.5` becomes `b365_gt_2_5`.
-- The stored Parquet schema is deterministic: identifier columns such as `country`, `league`, `season`, `date`, `hometeam`, and `awayteam` are written as strings; count-style match stats such as goals, shots, corners, fouls, and cards are written as integers; odds and handicap lines are written as `FLOAT64`-compatible numeric columns.
-- Every Parquet file now includes `country`, `league`, `season`, `source_url`, and `source_type` as actual table columns in addition to being represented in the GCS object path.
-- Both scripts can also maintain a local DuckDB database, which is practical here because the full dataset is small enough to use directly during runtime.
-- The incremental script checks only the latest season for each league by default, plus the combined extra-league feeds, then refreshes partitions that contain match rows in the last `N` days so GCS and DuckDB stay consistent.
-- The incremental script can run country discovery and dataset refresh in parallel with `--workers`. DuckDB writes are coordinated so the local database stays consistent while network fetches and GCS uploads run concurrently.
-- The Python EDA tool is designed around explicit exploratory tool calls on collected data: statistical aggregation, filtering/grouping, correlation analysis, plus supplemental data-quality checks such as missingness and outliers.
-- Season folder values are normalized from `YYYY/YYYY` on the site to `YYYY-YYYY` in GCS because `/` is a path separator.
-- Country and league partition values are normalized for storage paths by converting them to lowercase, replacing spaces with underscores, and cleaning unsafe path characters.
-- The GCS layout uses Hive-style partition folders: `country=<country>/league=<league>/season=<season>/...`.
-- Some Football-Data country pages, especially in the extra leagues section, expose a single combined CSV instead of season-specific league links. The script now partitions those files by the source `League` and `Season` columns so they still upload into the same partitioned layout.
-- The same script works in local Python, Docker, and Google Cloud because it uses environment variables plus standard Google Application Default Credentials.
+- [evals/test_betting_room.py](evals/test_betting_room.py)
+- [evals/test_deterministic.py](evals/test_deterministic.py)

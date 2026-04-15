@@ -422,6 +422,28 @@ CASUAL_CONVERSATION_TERMS = {
     "thanks",
     "thank you",
 }
+RECENT_CONTEXT_MARKERS = (
+    "here",
+    "there",
+    "this league",
+    "that league",
+    "same league",
+    "this team",
+    "that team",
+    "same team",
+    "this season",
+    "that season",
+    "same season",
+    "current selection",
+    "selected league",
+    "selected team",
+)
+CLARIFICATION_PATTERNS = (
+    r"^\s*i\s+meant\s+(?P<subject>.+?)\s*$",
+    r"^\s*i\s+was\s+asking\s+about\s+(?P<subject>.+?)\s*$",
+    r"^\s*i\s+am\s+asking\s+about\s+(?P<subject>.+?)\s*$",
+    r"^\s*asking\s+about\s+(?P<subject>.+?)\s*$",
+)
 INTENT_OPTIONS = {
     "count_lookup",
     "team_recent_claim",
@@ -893,6 +915,24 @@ def build_executive_summary(payload: dict, scope: QueryScope, sources: list[dict
     return points[:5]
 
 
+def build_warehouse_executive_summary(payload: dict) -> list[str]:
+    points: list[str] = []
+    answer = clean_external_text(payload.get("answer", ""), limit=260)
+    highlights = payload.get("highlights", [])
+    hypothesis = payload.get("hypothesis") or {}
+
+    if answer:
+        points.append(f"**Core finding:** {answer}")
+
+    for item in highlights[:3]:
+        points.append(f"**{item['label']}:** {item['value']} ({item['caption']})")
+
+    if hypothesis.get("statement"):
+        points.append(f"**Analyst view:** {hypothesis['statement']}")
+
+    return points[:5]
+
+
 def line_chart(
     title: str,
     summary: str,
@@ -924,6 +964,46 @@ def bar_chart(
         "x": categories,
         "y_label": y_label,
         "series": series,
+    }
+
+
+def area_chart(
+    title: str,
+    summary: str,
+    x_values: list[str],
+    series: list[dict],
+    y_label: str = "Value",
+) -> dict:
+    return {
+        "type": "area",
+        "title": title,
+        "summary": summary,
+        "x": x_values,
+        "y_label": y_label,
+        "series": series,
+    }
+
+
+def dumbbell_chart(
+    title: str,
+    summary: str,
+    categories: list[str],
+    left_series_name: str,
+    right_series_name: str,
+    left_values: list[float | None],
+    right_values: list[float | None],
+    y_label: str = "Value",
+) -> dict:
+    return {
+        "type": "dumbbell",
+        "title": title,
+        "summary": summary,
+        "categories": categories,
+        "left_series_name": left_series_name,
+        "right_series_name": right_series_name,
+        "left_values": left_values,
+        "right_values": right_values,
+        "y_label": y_label,
     }
 
 
@@ -1135,6 +1215,177 @@ def resolve_scope(connection: duckdb.DuckDBPyConnection, message: str) -> QueryS
     season_match = SEASON_PATTERN.search(message)
     season = season_match.group(0) if season_match else None
     return QueryScope(country=country, league=league, season=season, team=team)
+
+
+def message_needs_recent_context(message: str, scope: QueryScope) -> bool:
+    if not scope.is_global:
+        return False
+    normalized = normalize_text(message)
+    if not normalized:
+        return False
+    if any(contains_phrase(normalized, marker) for marker in RECENT_CONTEXT_MARKERS):
+        return True
+    follow_up_starters = (
+        "what about",
+        "how about",
+        "compare that",
+        "compare this",
+        "show me that",
+        "show me this",
+        "and that",
+        "and this",
+    )
+    return any(normalized.startswith(prefix) for prefix in follow_up_starters)
+
+
+def history_entry_text(entry: dict) -> str:
+    candidates = (
+        str(entry.get("question") or "").strip(),
+        str(entry.get("text") or "").strip(),
+        str(entry.get("message") or "").strip(),
+    )
+    for candidate in candidates:
+        if candidate:
+            return candidate
+    return ""
+
+
+def scope_from_history_entry(connection: duckdb.DuckDBPyConnection, entry: dict) -> QueryScope:
+    candidates = [
+        str(entry.get("scope") or "").strip(),
+        str(entry.get("question") or "").strip(),
+        str(entry.get("text") or "").strip(),
+        str(entry.get("message") or "").strip(),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        candidate_scope = resolve_scope(connection, candidate)
+        if not candidate_scope.is_global:
+            return candidate_scope
+    return QueryScope()
+
+
+def apply_recent_scope(message: str, scope: QueryScope) -> str:
+    label = scope.label
+    rewritten = message
+    replacements = (
+        (r"\bhere\b", f"in {label}"),
+        (r"\bthere\b", f"in {label}"),
+        (r"\bthis league\b", label),
+        (r"\bthat league\b", label),
+        (r"\bsame league\b", label),
+        (r"\bthis team\b", label),
+        (r"\bthat team\b", label),
+        (r"\bsame team\b", label),
+        (r"\bthis season\b", label),
+        (r"\bthat season\b", label),
+        (r"\bsame season\b", label),
+        (r"\bcurrent selection\b", label),
+        (r"\bselected league\b", label),
+        (r"\bselected team\b", label),
+    )
+    for pattern, replacement in replacements:
+        rewritten = re.sub(pattern, replacement, rewritten, flags=re.IGNORECASE)
+    if rewritten == message:
+        trimmed = message.rstrip()
+        suffix = "" if trimmed.endswith("?") else ""
+        rewritten = f"{trimmed} in {label}{suffix}"
+    return compact_whitespace(rewritten)
+
+
+def extract_clarification_subject(message: str) -> str | None:
+    text = compact_whitespace(message)
+    if not text:
+        return None
+    for pattern in CLARIFICATION_PATTERNS:
+        match = re.match(pattern, text, flags=re.IGNORECASE)
+        if match:
+            subject = compact_whitespace(match.group("subject"))
+            return subject.strip(" .?!,;:") or None
+    return None
+
+
+def merge_subject_hint(existing_subject: str, subject_hint: str) -> str:
+    existing = compact_whitespace(existing_subject)
+    hint = compact_whitespace(subject_hint)
+    if not existing:
+        return hint
+    if not hint:
+        return existing
+    existing_tokens = normalize_text(existing).split()
+    hint_tokens = normalize_text(hint).split()
+    if not existing_tokens or not hint_tokens:
+        return hint or existing
+    if " ".join(existing_tokens) == " ".join(hint_tokens):
+        return existing
+    if all(token in existing_tokens for token in hint_tokens):
+        return existing
+    if all(token in hint_tokens for token in existing_tokens):
+        return hint
+    if len(existing_tokens) == 1 and len(hint_tokens) == 1:
+        return f"{hint} {existing}"
+    if len(hint_tokens) == 1 and hint_tokens[0] not in existing_tokens:
+        return f"{hint} {existing}"
+    return hint
+
+
+def rewrite_question_with_subject(question: str, subject_hint: str) -> str | None:
+    text = compact_whitespace(question)
+    if not text:
+        return None
+    patterns = (
+        r"^(?P<prefix>.*?\b(?:is|was|are|were|does|do|did)\s+)(?P<subject>.+?)(?P<suffix>\s+(?:from|for|at|on|in)\b.*)$",
+        r"^(?P<prefix>.*?\b(?:is|was|are|were)\s+)(?P<subject>.+?)(?P<suffix>\s+(?:a|an|the)\b.*)$",
+    )
+    for pattern in patterns:
+        match = re.match(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        merged_subject = merge_subject_hint(match.group("subject"), subject_hint)
+        return compact_whitespace(f"{match.group('prefix')}{merged_subject}{match.group('suffix')}")
+    return compact_whitespace(f"{text} about {subject_hint}")
+
+
+def resolve_clarification_from_history(message: str, history: list[dict] | None = None) -> str | None:
+    subject_hint = extract_clarification_subject(message)
+    if not subject_hint or not history:
+        return None
+    recent_entries = [entry for entry in history[-5:] if isinstance(entry, dict)]
+    for entry in reversed(recent_entries):
+        if str(entry.get("role") or "").strip().lower() != "user":
+            continue
+        previous_text = history_entry_text(entry)
+        if not previous_text or previous_text.strip() == message.strip():
+            continue
+        rewritten = rewrite_question_with_subject(previous_text, subject_hint)
+        if rewritten:
+            return rewritten
+    return None
+
+
+def resolve_message_with_recent_context(
+    connection: duckdb.DuckDBPyConnection,
+    message: str,
+    history: list[dict] | None = None,
+) -> tuple[str, QueryScope | None]:
+    clarification_rewrite = resolve_clarification_from_history(message, history)
+    if clarification_rewrite:
+        return clarification_rewrite, None
+
+    current_scope = resolve_scope(connection, message)
+    if not history or not message_needs_recent_context(message, current_scope):
+        return message, None
+
+    recent_entries = [entry for entry in history[-5:] if isinstance(entry, dict)]
+    for entry in reversed(recent_entries):
+        if entry.get("out_of_context"):
+            continue
+        recent_scope = scope_from_history_entry(connection, entry)
+        if recent_scope.is_global:
+            continue
+        return apply_recent_scope(message, recent_scope), recent_scope
+    return message, None
 
 
 def find_external_focus(normalized_message: str) -> tuple[str | None, str | None]:
@@ -2418,8 +2669,13 @@ def simple_football_knowledge_payload(message: str, term: str) -> dict:
     display_term = canonical_term.title() if canonical_term not in {"offside"} else "Offside"
     return {
         "answer": answer,
-        "tool_calls": [],
-        "highlights": [],
+        "tool_calls": [
+            tool_call("domain_gate", "Domain Validation", "Confirmed the request is football-related."),
+            tool_call("external_reasoner", "External Reasoner", "The request is about general football knowledge rather than warehouse match data."),
+        ],
+        "highlights": [
+            metric("Mode", "Football knowledge", display_term),
+        ],
         "table": None,
         "suggested_prompts": [
             f"Explain {display_term} with an example.",
@@ -2427,13 +2683,21 @@ def simple_football_knowledge_payload(message: str, term: str) -> dict:
             "What is offside in football?",
         ],
         "charts": [],
-        "hypothesis": None,
+        "hypothesis": hypothesis_payload(
+            "General football knowledge answer",
+            answer,
+            [
+                f"The request is about the football concept '{display_term}'.",
+                "This answer uses general football knowledge rather than warehouse match-level analysis.",
+            ],
+        ),
         "sources": [],
-        "executive_summary": [],
-        "data_mode": "knowledge",
+        "executive_summary": [
+            f"**Core finding:** {answer}",
+            f"**Mode:** '{display_term}' is a football knowledge question, so the answer came from the external/LLM path instead of DuckDB.",
+        ],
+        "data_mode": "external_fact",
         "out_of_context": False,
-        "is_conversational": False,
-        "is_simple_response": True,
     }
 
 
@@ -2538,7 +2802,11 @@ def count_lookup_payload(connection: duckdb.DuckDBPyConnection, message: str, sc
             return {
                 "answer": answer,
                 "tool_calls": [],
-                "highlights": [],
+                "highlights": [
+                    metric("Team", scope.team, f"{len(recent)} tracked seasons"),
+                    metric("Goals scored", str(total_goals), f"{first_season} to {last_season}"),
+                    metric("Latest season", last_season, recent.iloc[-1]["league"]),
+                ],
                 "table": table_payload(
                     recent[["season", "league", "goals_for", "matches_played", "goals_per_match"]],
                     float_digits=2,
@@ -2579,7 +2847,10 @@ def count_lookup_payload(connection: duckdb.DuckDBPyConnection, message: str, sc
             return {
                 "answer": answer,
                 "tool_calls": [],
-                "highlights": [],
+                "highlights": [
+                    metric("League", label, season),
+                    metric("Teams", str(team_count), "Distinct clubs in scope"),
+                ],
                 "table": None,
                 "suggested_prompts": contextual_suggestions(league=scope.league),
                 "charts": [],
@@ -2700,7 +2971,11 @@ def recent_team_claim_response(connection: duckdb.DuckDBPyConnection, message: s
     return {
         "answer": answer,
         "tool_calls": [],
-        "highlights": [],
+        "highlights": [
+            metric("Window", f"Last {len(frame)} matches", scope.team),
+            metric("Wins", str(wins), "Matches won in the run"),
+            metric("Draws / losses", f"{draws} / {losses}", "Recent run"),
+        ],
         "table": table_payload(table, float_digits=0),
         "suggested_prompts": [
             f"What is {scope.team}'s current league position?",
@@ -2752,18 +3027,31 @@ def direct_football_clarification_payload(message: str, scope: QueryScope) -> di
 
     return {
         "answer": answer,
-        "tool_calls": [],
-        "highlights": [],
+        "tool_calls": [
+            tool_call("domain_gate", "Domain Validation", "Confirmed the request is football-related."),
+            tool_call("external_reasoner", "External Reasoner", "The request is football-related but too underspecified for warehouse analysis, so the assistant returned a clarification."),
+        ],
+        "highlights": [
+            metric("Mode", "Football clarification", scope.label),
+        ],
         "table": None,
         "suggested_prompts": prompts,
         "charts": [],
-        "hypothesis": None,
+        "hypothesis": hypothesis_payload(
+            "More football scope is needed before warehouse analysis",
+            answer,
+            [
+                "The request is football-related.",
+                "The request does not yet specify enough scope for a useful warehouse analysis run.",
+            ],
+        ),
         "sources": [],
-        "executive_summary": [],
-        "data_mode": "direct",
+        "executive_summary": [
+            f"**Core finding:** {answer}",
+            "**Mode:** The request stayed inside football scope, but it needs a narrower task before warehouse EDA is useful.",
+        ],
+        "data_mode": "external_fact",
         "out_of_context": False,
-        "is_conversational": False,
-        "is_simple_response": True,
     }
 
 
@@ -3098,8 +3386,13 @@ def build_direct_fact_payload(message: str, scope: QueryScope, domain: DomainChe
             pass
     return {
         "answer": answer,
-        "tool_calls": [],
-        "highlights": [],
+        "tool_calls": [
+            tool_call("domain_gate", "Domain Validation", "Confirmed the request is football-related and outside the warehouse schema."),
+            tool_call("external_reasoner", "External Reasoner", "Answered the football question through the external/LLM path because the warehouse does not cover this fact."),
+        ],
+        "highlights": [
+            metric("Mode", "External football answer", scope.label if not scope.is_global else (domain.external_label or "External football fact")),
+        ],
         "table": None,
         "suggested_prompts": [
             "Which club does Ronaldo play for?",
@@ -3107,41 +3400,30 @@ def build_direct_fact_payload(message: str, scope: QueryScope, domain: DomainChe
             "Which country has won the FIFA World Cup the most?",
         ],
         "charts": [],
-        "hypothesis": None,
+        "hypothesis": hypothesis_payload(
+            "This football question bypasses the warehouse",
+            answer,
+            [
+                "The request is football-related.",
+                "The requested fact is not represented in the team/league warehouse schema.",
+            ],
+        ),
         "sources": [],
-        "executive_summary": [],
+        "executive_summary": [
+            f"**Core finding:** {answer}",
+            "**Mode:** The request is football-related but outside DuckDB coverage, so the answer came from the external/LLM path.",
+        ],
         "data_mode": "external_fact",
         "out_of_context": False,
-        "is_conversational": False,
-        "is_simple_response": True,
         "intent": "external_fact",
         "scope": scope.label if not scope.is_global else (domain.external_label or "external football fact"),
-    }
-
-
-def compact_simple_payload(payload: dict, *, intent: str, scope: str, data_mode: str = "external_fact") -> dict:
-    return {
-        "answer": payload.get("answer", ""),
-        "tool_calls": [],
-        "highlights": [],
-        "table": None,
-        "suggested_prompts": payload.get("suggested_prompts", []),
-        "charts": [],
-        "hypothesis": None,
-        "sources": payload.get("sources", [])[:2],
-        "executive_summary": [],
-        "data_mode": data_mode,
-        "out_of_context": False,
-        "is_conversational": False,
-        "is_simple_response": True,
-        "intent": intent,
-        "scope": scope,
     }
 
 
 def assess_answerability(message: str, scope: QueryScope, domain: DomainCheck) -> AnswerabilityCheck:
     normalized = normalize_text(message)
     warehouse_scope_present = bool(scope.team or scope.league or scope.country or scope.season)
+    count_subject = classify_count_subject(message)
     asks_for_analysis = any(
         term in normalized
         for term in ("analyze", "analysis", "trend", "compare", "profile", "eda", "standings", "table", "correlation")
@@ -3171,7 +3453,13 @@ def assess_answerability(message: str, scope: QueryScope, domain: DomainCheck) -
             reason="The question is football-related but points to information outside the warehouse slice.",
         )
 
-    if warehouse_scope_present or asks_for_analysis or classify_count_subject(message):
+    if count_subject and not warehouse_scope_present:
+        return AnswerabilityCheck(
+            mode="clarify",
+            reason="The question asks for a football count, but it needs a clearer league, country, team, or season scope first.",
+        )
+
+    if warehouse_scope_present or asks_for_analysis or count_subject:
         return AnswerabilityCheck(
             mode="warehouse",
             reason="The question can be answered from team, league, country, season, or match-level warehouse data.",
@@ -3189,6 +3477,76 @@ def build_warehouse_charts(
     intent: str,
     message: str = "",
 ) -> list[dict]:
+    if intent == "count_lookup":
+        subject = classify_count_subject(message) or "count"
+        if subject == "goals" and scope.team:
+            trend = fetch_team_season_frame(connection, scope.team)
+            if trend.empty:
+                return []
+            window = extract_recent_year_window(message) if message else 5
+            recent = trend.tail(min(window, len(trend))).reset_index(drop=True)
+            return [
+                bar_chart(
+                    f"{scope.team} goals by season",
+                    "Shows the exact season totals behind the count answer.",
+                    recent["season"].astype(str).tolist(),
+                    [{"name": "Goals for", "data": serialize_numeric(recent["goals_for"], digits=0)}],
+                    y_label="Goals",
+                ),
+                line_chart(
+                    f"{scope.team} goals per match by season",
+                    "Adds rate context so high totals are not confused with longer seasons.",
+                    recent["season"].astype(str).tolist(),
+                    [{"name": "Goals / match", "data": serialize_numeric(recent["goals_per_match"], digits=2)}],
+                    y_label="Goals / match",
+                ),
+            ]
+        if subject == "teams" and scope.league:
+            target_scope = QueryScope(country=scope.country, league=scope.league, season=scope.season)
+            season = scope.season or fetch_latest_season(connection, target_scope, prefer_hyphenated=False)
+            count = fetch_distinct_team_count(connection, target_scope, season=season)
+            return [
+                bar_chart(
+                    f"Team count in {scope.league} ({season})",
+                    "Simple league-size view for the resolved latest season in scope.",
+                    [scope.league],
+                    [{"name": "Teams", "data": [count]}],
+                    y_label="Teams",
+                ),
+            ]
+        return []
+
+    if intent == "team_recent_claim" and scope.team:
+        frame = fetch_recent_team_matches(connection, scope.team, limit=extract_recent_match_window(message))
+        if frame.empty:
+            return []
+        return [
+            bar_chart(
+                f"{scope.team} goals for vs against across the recent run",
+                "Shows the scoreline pattern match by match for the requested recent window.",
+                frame["date"].astype(str).tolist(),
+                [
+                    {"name": "Goals for", "data": serialize_numeric(frame["goals_for"], digits=0)},
+                    {"name": "Goals against", "data": serialize_numeric(frame["goals_against"], digits=0)},
+                ],
+                y_label="Goals",
+            ),
+            bar_chart(
+                f"{scope.team} recent result mix",
+                "Summarizes how many wins, draws, and losses occurred in the selected run.",
+                ["Wins", "Draws", "Losses"],
+                [{
+                    "name": "Matches",
+                    "data": [
+                        int((frame["result"] == "W").sum()),
+                        int((frame["result"] == "D").sum()),
+                        int((frame["result"] == "L").sum()),
+                    ],
+                }],
+                y_label="Matches",
+            ),
+        ]
+
     if intent == "team_performance":
         trend = fetch_team_season_frame(connection, scope.team or "")
         if trend.empty:
@@ -3198,6 +3556,19 @@ def build_warehouse_charts(
         points_proxy = recent["wins"] * 3 + recent["draws"]
         goal_diff = recent["goals_for"] - recent["goals_against"]
         result_mix_heatmap = build_team_result_mix_heatmap(recent)
+        team_pressure_map = heatmap_chart(
+            f"{scope.team} season pressure map",
+            "Shows which seasons stood out on win rate, scoring, concessions, and points proxy inside the selected team-history window.",
+            ["Win rate %", "Goals for / match", "Goals against / match", "Points proxy"],
+            recent["season"].astype(str).tolist(),
+            [
+                serialize_numeric(recent["win_rate"], digits=1),
+                serialize_numeric(recent["goals_per_match"], digits=2),
+                serialize_numeric(recent["goals_allowed_per_match"], digits=2),
+                serialize_numeric(points_proxy, digits=0),
+            ],
+            value_label="value",
+        )
         return [
             line_chart(
                 f"{scope.team} win rate by season",
@@ -3241,13 +3612,87 @@ def build_warehouse_charts(
                 [{"name": "Goal difference", "data": serialize_numeric(goal_diff, digits=0)}],
                 y_label="Goal diff",
             ),
+            team_pressure_map,
             *( [result_mix_heatmap] if result_mix_heatmap else [] ),
         ]
 
-    comparison_scope = QueryScope(country=scope.country, season=scope.season)
-    latest_season = None
-    snapshot = pd.DataFrame()
-    if intent == "league_compare" or intent == "overview" or scope.country or scope.league:
+    trend = fetch_season_trend_frame(connection, scope)
+    if intent == "home_advantage" and not trend.empty:
+        home_edge = (trend["avg_home_goals"] - trend["avg_away_goals"]).round(2)
+        venue_pressure_map = heatmap_chart(
+            "Venue pressure map",
+            "Puts the main venue-sensitive metrics on one surface so standout seasons are easier to spot than in separate lines alone.",
+            ["Home win %", "Away win %", "Draw %", "Home goal edge"],
+            trend["season"].astype(str).tolist(),
+            [
+                serialize_numeric(trend["home_win_rate"], digits=2),
+                serialize_numeric(trend["away_win_rate"], digits=2),
+                serialize_numeric(trend["draw_rate"], digits=2),
+                serialize_numeric(home_edge, digits=2),
+            ],
+            value_label="value",
+        )
+        return [
+            line_chart(
+                "Home and away win rates by season",
+                "Tracks whether the venue edge is widening, narrowing, or staying stable over time.",
+                trend["season"].astype(str).tolist(),
+                [
+                    {"name": "Home win %", "data": serialize_numeric(trend["home_win_rate"], digits=2)},
+                    {"name": "Away win %", "data": serialize_numeric(trend["away_win_rate"], digits=2)},
+                    {"name": "Draw %", "data": serialize_numeric(trend["draw_rate"], digits=2)},
+                ],
+                y_label="Share %",
+            ),
+            line_chart(
+                "Home and away goals by season",
+                "Shows whether the venue effect is supported by scoring separation, not just result outcomes.",
+                trend["season"].astype(str).tolist(),
+                [
+                    {"name": "Home goals", "data": serialize_numeric(trend["avg_home_goals"], digits=2)},
+                    {"name": "Away goals", "data": serialize_numeric(trend["avg_away_goals"], digits=2)},
+                ],
+                y_label="Goals / match",
+            ),
+            line_chart(
+                "Home scoring edge by season",
+                "Measures the direct home-minus-away goal gap for each season.",
+                trend["season"].astype(str).tolist(),
+                [{"name": "Home goal edge", "data": serialize_numeric(home_edge, digits=2)}],
+                y_label="Goals",
+            ),
+            venue_pressure_map,
+        ]
+
+    if intent == "scoring" and not trend.empty:
+        metric_heatmap = build_metric_heatmap(trend)
+        return [
+            line_chart(
+                "Goals per match by season",
+                "Shows whether scoring levels are rising, flat, or falling across the selected history.",
+                trend["season"].astype(str).tolist(),
+                [
+                    {"name": "Total goals", "data": serialize_numeric(trend["avg_total_goals"], digits=2)},
+                    {"name": "Home goals", "data": serialize_numeric(trend["avg_home_goals"], digits=2)},
+                    {"name": "Away goals", "data": serialize_numeric(trend["avg_away_goals"], digits=2)},
+                ],
+                y_label="Goals / match",
+            ),
+            line_chart(
+                "Shots and goals by season",
+                "Lets you see whether scoring changes are backed by chance volume.",
+                trend["season"].astype(str).tolist(),
+                [
+                    {"name": "Shots", "data": serialize_numeric(trend["avg_shots"], digits=1)},
+                    {"name": "Goals", "data": serialize_numeric(trend["avg_total_goals"], digits=2)},
+                ],
+                y_label="Per match",
+            ),
+            *( [metric_heatmap] if metric_heatmap else [] ),
+        ]
+
+    if intent == "league_compare":
+        comparison_scope = QueryScope(country=scope.country, season=scope.season)
         latest_season = fetch_latest_season(connection, comparison_scope, prefer_hyphenated=comparison_scope.is_global)
         snapshot = fetch_latest_league_snapshot(
             connection,
@@ -3255,150 +3700,40 @@ def build_warehouse_charts(
             latest_season,
             limit=None if comparison_scope.country else 8,
         )
-
-    trend = fetch_season_trend_frame(connection, scope)
-    feature_frame = fetch_match_feature_frame(connection, scope)
-    charts: list[dict] = []
-
-    if not trend.empty:
-        charts.extend(
-            [
-                line_chart(
-                    "Goals per match by season",
-                    "First-pass trend view for scoring level across the selected historical window.",
-                    trend["season"].astype(str).tolist(),
-                    [
-                        {"name": "Total goals", "data": serialize_numeric(trend["avg_total_goals"], digits=2)},
-                        {"name": "Home goals", "data": serialize_numeric(trend["avg_home_goals"], digits=2)},
-                        {"name": "Away goals", "data": serialize_numeric(trend["avg_away_goals"], digits=2)},
-                    ],
-                    y_label="Goals / match",
-                ),
-                line_chart(
-                    "Result rates by season",
-                    "Tracks whether the slice is becoming more home-dominant, more balanced, or more draw-heavy.",
-                    trend["season"].astype(str).tolist(),
-                    [
-                        {"name": "Home win %", "data": serialize_numeric(trend["home_win_rate"], digits=2)},
-                        {"name": "Draw %", "data": serialize_numeric(trend["draw_rate"], digits=2)},
-                        {"name": "Away win %", "data": serialize_numeric(trend["away_win_rate"], digits=2)},
-                    ],
-                    y_label="Share %",
-                ),
-                line_chart(
-                    "Chance creation vs finishing volume",
-                    "Pairs total shots with total goals to show whether scoring shifts are backed by underlying volume.",
-                    trend["season"].astype(str).tolist(),
-                    [
-                        {"name": "Shots", "data": serialize_numeric(trend["avg_shots"], digits=1)},
-                        {"name": "Goals", "data": serialize_numeric(trend["avg_total_goals"], digits=2)},
-                    ],
-                    y_label="Per match",
-                ),
-            ]
-        )
-        metric_heatmap = build_metric_heatmap(trend)
-        if metric_heatmap:
-            charts.append(metric_heatmap)
-
-    if not feature_frame.empty:
-        goal_band_frame = feature_frame.copy()
-        goal_band_frame["goal_band"] = safe_band_labels(
-            goal_band_frame["total_goals"],
-            bins=[-0.1, 1, 2, 3, 20],
-            labels=["0-1 goals", "2 goals", "3 goals", "4+ goals"],
-        )
-        goal_heatmap = build_proportion_heatmap(
-            goal_band_frame[goal_band_frame["goal_band"] != "nan"],
-            "goal_band",
-            "ftr",
-            "Match result mix by goal band",
-        )
-        if goal_heatmap:
-            charts.append(goal_heatmap)
-
-        if feature_frame["total_cards"].notna().sum() >= max(50, len(feature_frame) * 0.3):
-            card_band_frame = feature_frame.copy()
-            card_band_frame["card_band"] = safe_band_labels(
-                card_band_frame["total_cards"],
-                bins=[-0.1, 1, 3, 5, 100],
-                labels=["0-1 cards", "2-3 cards", "4-5 cards", "6+ cards"],
-            )
-            card_heatmap = build_proportion_heatmap(
-                card_band_frame[card_band_frame["card_band"] != "nan"],
-                "card_band",
-                "ftr",
-                "Match result mix by card intensity",
-            )
-            if card_heatmap:
-                charts.append(card_heatmap)
-
-        if feature_frame["total_shots"].notna().sum() >= max(50, len(feature_frame) * 0.3):
-            shot_band_frame = feature_frame.copy()
-            shot_band_frame["shot_band"] = safe_band_labels(
-                shot_band_frame["total_shots"],
-                bins=[-0.1, 15, 22, 30, 100],
-                labels=["0-15 shots", "16-22 shots", "23-30 shots", "31+ shots"],
-            )
-            shot_heatmap = build_proportion_heatmap(
-                shot_band_frame[shot_band_frame["shot_band"] != "nan"],
-                "shot_band",
-                "ftr",
-                "Match result mix by shot volume",
-            )
-            if shot_heatmap:
-                charts.append(shot_heatmap)
-
-    if intent == "home_advantage" and not trend.empty:
-        home_edge = (trend["avg_home_goals"] - trend["avg_away_goals"]).round(2)
-        charts.append(
-            line_chart(
-                "Home scoring edge by season",
-                "Measures the direct home-minus-away goal gap instead of only comparing the two lines visually.",
-                trend["season"].astype(str).tolist(),
-                [{"name": "Home goal edge", "data": serialize_numeric(home_edge, digits=2)}],
-                y_label="Goals",
-            )
-        )
-
-    if intent == "league_compare":
         if snapshot.empty:
-            return charts[:6]
+            return []
         labels = snapshot.apply(
             lambda row: row["league"] if scope.country else f"{row['country']} · {row['league']}",
             axis=1,
         ).tolist()
-        charts.extend(
-            [
-                bar_chart(
+        return [
+            bar_chart(
                 f"Goals per match across the comparison set ({latest_season})",
                 "Compares how open or conservative each visible league is on scoring output.",
                 labels,
                 [{"name": "Avg goals", "data": serialize_numeric(snapshot["avg_goals"], digits=2)}],
                 y_label="Goals / match",
             ),
-                bar_chart(
+            bar_chart(
                 f"Cards per match across the comparison set ({latest_season})",
                 "Shows discipline and match-intensity differences across the visible leagues.",
                 labels,
                 [{"name": "Avg cards", "data": serialize_numeric(snapshot["avg_cards"], digits=2)}],
                 y_label="Cards / match",
             ),
-                bar_chart(
-                    f"Home-win rate across the comparison set ({latest_season})",
-                    "Lets the hypothesis compare scoring openness with venue dominance instead of looking at one metric alone.",
-                    labels,
-                    [{"name": "Home win %", "data": serialize_numeric(snapshot["home_win_rate"], digits=1)}],
-                    y_label="Home win %",
-                ),
-            ]
-        )
-        return charts[:6]
+            bar_chart(
+                f"Home-win rate across the comparison set ({latest_season})",
+                "Adds venue dominance context to the same league set.",
+                labels,
+                [{"name": "Home win %", "data": serialize_numeric(snapshot["home_win_rate"], digits=1)}],
+                y_label="Home win %",
+            ),
+        ]
 
     if intent == "correlation":
         frame = fetch_correlation_frame(connection, scope)
         if frame.empty:
-            return charts[:6]
+            return []
         subset = frame[[
             "total_goals",
             "total_shots",
@@ -3409,9 +3744,8 @@ def build_warehouse_charts(
         strongest = correlation_response(connection, scope)["table"]
         strongest_frame = pd.DataFrame(strongest["rows"], columns=strongest["columns"])
         strongest_frame["correlation"] = strongest_frame["correlation"].astype(float)
-        charts.extend(
-            [
-                heatmap_chart(
+        return [
+            heatmap_chart(
                 "Correlation heatmap",
                 "Highlights which match-intensity metrics move together inside the selected slice.",
                 subset.index.tolist(),
@@ -3426,17 +3760,27 @@ def build_warehouse_charts(
                 [{"name": "Correlation", "data": serialize_numeric(strongest_frame["correlation"], digits=3)}],
                 y_label="corr",
             ),
-            ]
-        )
-        return charts[:6]
+        ]
 
     if intent == "data_quality":
         quality = fetch_data_quality_frame(connection, scope)
         if quality.empty:
-            return charts[:6]
-        charts.extend(
+            return []
+        missingness_pressure_map = heatmap_chart(
+            "Missingness pressure map",
+            "Puts the main completeness metrics on one surface so weak seasons stand out immediately.",
+            ["HS missing %", "HST missing %", "Referee missing %", "Kickoff time missing %"],
+            quality["season"].astype(str).tolist(),
             [
-                line_chart(
+                serialize_numeric(quality["hs_missing_pct"], digits=1),
+                serialize_numeric(quality["hst_missing_pct"], digits=1),
+                serialize_numeric(quality["referee_missing_pct"], digits=1),
+                serialize_numeric(quality["time_missing_pct"], digits=1),
+            ],
+            value_label="missing %",
+        )
+        return [
+            line_chart(
                 "Shot data missingness by season",
                 "Shows how missingness in shot-level columns changes from older to more recent seasons.",
                 quality["season"].astype(str).tolist(),
@@ -3456,42 +3800,96 @@ def build_warehouse_charts(
                 ],
                 y_label="Missing %",
             ),
-                heatmap_chart(
-                    "Missingness pressure map",
-                    "Normalizes the four key completeness metrics so weak seasons stand out immediately.",
-                    ["HS missing %", "HST missing %", "Referee missing %", "Kickoff time missing %"],
-                    quality["season"].astype(str).tolist(),
-                    [
-                        serialize_numeric(quality["hs_missing_pct"], digits=1),
-                        serialize_numeric(quality["hst_missing_pct"], digits=1),
-                        serialize_numeric(quality["referee_missing_pct"], digits=1),
-                        serialize_numeric(quality["time_missing_pct"], digits=1),
-                    ],
-                    value_label="missing %",
-                ),
-            ]
-        )
-        return charts[:6]
+            missingness_pressure_map,
+        ]
 
-    if not snapshot.empty and latest_season:
-        labels = snapshot.apply(
-            lambda row: row["league"] if scope.country else f"{row['country']} · {row['league']}",
-            axis=1,
-        ).tolist()
-        charts.insert(
-            0,
-            bar_chart(
-                    f"Latest scoring snapshot ({latest_season})",
-                    "Places the requested slice against the latest visible league comparison set.",
-                    labels,
-                    [{"name": "Avg goals", "data": serialize_numeric(snapshot["avg_goals"], digits=2)}],
-                    y_label="Goals / match",
-            ),
+    if intent == "overview":
+        comparison_scope = QueryScope(country=scope.country, season=scope.season)
+        latest_season = fetch_latest_season(connection, comparison_scope, prefer_hyphenated=comparison_scope.is_global)
+        snapshot = fetch_latest_league_snapshot(
+            connection,
+            comparison_scope,
+            latest_season,
+            limit=None if comparison_scope.country else 8,
         )
-    return charts[:6]
+        charts: list[dict] = []
+        if not snapshot.empty and latest_season:
+            labels = snapshot.apply(
+                lambda row: row["league"] if scope.country else f"{row['country']} · {row['league']}",
+                axis=1,
+            ).tolist()
+            charts.append(
+            bar_chart(
+                f"Latest scoring snapshot ({latest_season})",
+                "Places the requested slice against the latest visible league comparison set.",
+                labels,
+                [{"name": "Avg goals", "data": serialize_numeric(snapshot["avg_goals"], digits=2)}],
+                y_label="Goals / match",
+            ),
+            )
+        if not trend.empty:
+            charts.append(
+                line_chart(
+                    "Goals per match by season",
+                    "High-level scoring trend for the selected slice.",
+                    trend["season"].astype(str).tolist(),
+                    [{"name": "Total goals", "data": serialize_numeric(trend["avg_total_goals"], digits=2)}],
+                    y_label="Goals / match",
+                )
+            )
+        return charts[:3]
+
+    return []
 
 
 def build_warehouse_hypothesis(connection: duckdb.DuckDBPyConnection, scope: QueryScope, intent: str) -> dict | None:
+    if intent == "count_lookup":
+        if scope.team:
+            trend = fetch_team_season_frame(connection, scope.team)
+            if trend.empty:
+                return None
+            window = trend.tail(min(5, len(trend))).reset_index(drop=True)
+            return hypothesis_payload(
+                f"{scope.team} scoring count should be read in seasonal context",
+                f"The requested count for {scope.team} is grounded in {len(window)} tracked seasons of warehouse history.",
+                [
+                    f"Latest season in the comparison window: {window.iloc[-1]['season']}.",
+                    f"Goals across the visible window: {int(window['goals_for'].sum())}.",
+                    "The count is descriptive of the selected history rather than a forward projection.",
+                ],
+            )
+        if scope.league:
+            target_scope = QueryScope(country=scope.country, league=scope.league, season=scope.season)
+            season = scope.season or fetch_latest_season(connection, target_scope, prefer_hyphenated=False)
+            count = fetch_distinct_team_count(connection, target_scope, season=season)
+            return hypothesis_payload(
+                f"{scope.league} league size is directly resolved from the latest season in scope",
+                f"The warehouse shows {count} distinct teams in {scope.league} for {season}.",
+                [
+                    f"Country scope: {scope.country or 'resolved from league name'}.",
+                    f"Season used: {season}.",
+                    "This is a direct warehouse count, not an inferred estimate.",
+                ],
+            )
+        return None
+
+    if intent == "team_recent_claim" and scope.team:
+        frame = fetch_recent_team_matches(connection, scope.team, limit=10)
+        if frame.empty:
+            return None
+        wins = int((frame["result"] == "W").sum())
+        draws = int((frame["result"] == "D").sum())
+        losses = int((frame["result"] == "L").sum())
+        return hypothesis_payload(
+            f"{scope.team} recent form can be described directly from the latest match window",
+            f"In the recent run, {scope.team} posted {wins} wins, {draws} draws, and {losses} losses.",
+            [
+                f"Recent window size: {len(frame)} matches.",
+                f"Goals for vs against in that run: {int(frame['goals_for'].sum())} vs {int(frame['goals_against'].sum())}.",
+                "This is a descriptive recent-form read, not a forecast.",
+            ],
+        )
+
     if intent == "team_performance":
         trend = fetch_team_season_frame(connection, scope.team or "")
         if trend.empty:
@@ -4542,60 +4940,22 @@ def enrich_warehouse_payload(
 ) -> dict:
     rows, seasons = fetch_scope_metrics(connection, scope)
     latest_season = fetch_latest_season(connection, scope, prefer_hyphenated=scope.is_global)
-    dynamic_eda = run_dynamic_eda(connection, duckdb_path, scope, intent)
-    step_order = ["profile", "trend", "segment", "distribution", "correlation", "quality"]
-    specialist_tool_calls = [
-        tool_call(
-            f"{key}_step",
-            dynamic_eda[key]["label"],
-            dynamic_eda[key].get("agent_claim") or dynamic_eda[key]["summary"],
-        )
-        for key in step_order
-        if key in dynamic_eda
-    ]
-    specialist_charts = [
-        dynamic_eda[key]["chart"]
-        for key in step_order
-        if key in dynamic_eda and dynamic_eda[key].get("chart")
-    ]
-    merged_highlights = list(payload.get("highlights", []))
-    seen_highlight_labels = {item["label"] for item in merged_highlights}
-    for key in step_order:
-        for item in dynamic_eda.get(key, {}).get("highlights", []):
-            if item["label"] in seen_highlight_labels:
-                continue
-            merged_highlights.append(item)
-            seen_highlight_labels.add(item["label"])
-            if len(merged_highlights) >= 6:
-                break
-        if len(merged_highlights) >= 6:
-            break
-
     curated_charts = build_warehouse_charts(connection, scope, intent, message)
-    if not curated_charts:
-        curated_charts = specialist_charts[:3]
+    hypothesis = build_warehouse_hypothesis(connection, scope, intent)
+    sources = external_validation_sources(scope)[:3]
+    if not sources:
+        sources = warehouse_sources(scope, rows, seasons, latest_season)[:2]
 
-    external_sources = external_validation_sources(scope)
-    profile = profile_scope_data(connection, scope)
-
-    payload["tool_calls"] = [
-        tool_call("domain_gate", "Domain Validation", f"Confirmed the request is football-related via: {', '.join(domain.matched_terms[:4])}."),
-        tool_call("warehouse_fetch", "Warehouse Retrieval", f"Fetched {rows:,} rows from DuckDB for {scope.label}."),
-        tool_call("agent_framework", "Agent Framework", "Used Agno agents for EDA planning and specialist orchestration.") if framework_agents_enabled() else tool_call("agent_framework", "Agent Framework", "Used deterministic fallback orchestration because framework agents were unavailable or unconfigured."),
-        tool_call("schema_profile", "Schema-driven Profiler", f"Profiled column types, null rates, cardinality, and value spread for {scope.label} before branching."),
-        tool_call("iterative_eda", "Iterative EDA Planner", "Planned the next EDA branches from the profile instead of running a fixed checklist."),
-        tool_call("parallel_specialists", "Parallel Specialist Pool", "Executed the selected specialist analyses concurrently after planning."),
-        *specialist_tool_calls,
-        tool_call("hypothesis", "Hypothesis Builder", "Ranked competing hypotheses, separated association from causation, and attached confidence plus caveats."),
-    ]
-    payload["highlights"] = merged_highlights
+    payload["tool_calls"] = []
+    payload["highlights"] = payload.get("highlights", [])[:4]
     payload["charts"] = curated_charts
-    payload["hypothesis"] = build_dynamic_hypothesis(connection, scope, intent, profile, dynamic_eda, message)
-    payload["sources"] = external_sources or warehouse_sources(scope, rows, seasons, latest_season)[:3]
-    payload["executive_summary"] = build_executive_summary(payload, scope, payload["sources"])
+    payload["hypothesis"] = hypothesis
+    payload["sources"] = sources
+    payload["executive_summary"] = build_warehouse_executive_summary(payload)
     payload["data_mode"] = "warehouse"
     payload["out_of_context"] = False
     payload["is_simple_response"] = False
+    payload["is_conversational"] = False
     return payload
 
 
@@ -4689,16 +5049,10 @@ def detect_intent(message: str, team_present: bool = False) -> str:
 
 
 def chat_response(message: str, duckdb_path: str = DEFAULT_DUCKDB_PATH) -> dict:
-    if is_casual_conversation(message):
-        payload = conversational_payload(message)
-        payload["intent"] = "conversation"
-        payload["scope"] = "conversation"
-        return payload
-
     simple_term = resolve_simple_football_term(message)
     if simple_term:
         payload = simple_football_knowledge_payload(message, simple_term)
-        payload["intent"] = "football_knowledge"
+        payload["intent"] = "external_fact"
         payload["scope"] = "football knowledge"
         return payload
 
@@ -4724,38 +5078,26 @@ def chat_response(message: str, duckdb_path: str = DEFAULT_DUCKDB_PATH) -> dict:
             if should_use_direct_fact_answer(message, scope):
                 return build_direct_fact_payload(message, scope, domain)
             payload = build_web_fallback_payload(message, domain)
-            payload = compact_simple_payload(
-                payload,
-                intent="external_fact",
-                scope=domain.external_label or "external football fact",
-            )
+            payload["intent"] = "external_fact"
+            payload["scope"] = domain.external_label or "external football fact"
             return payload
 
         if answerability.mode == "clarify":
             payload = direct_football_clarification_payload(message, scope)
-            payload["intent"] = "direct_football_reply"
+            payload["intent"] = "external_fact"
             payload["scope"] = scope.label
             return payload
 
         intent = detect_intent(message, team_present=scope.team is not None)
         if intent == "count_lookup":
             payload = count_lookup_payload(connection, message, scope)
-            payload["intent"] = intent
-            payload["scope"] = scope.label
-            return payload
-        if intent == "team_recent_claim":
+        elif intent == "team_recent_claim":
             payload = recent_team_claim_response(connection, message, scope)
-            payload["intent"] = intent
-            payload["scope"] = scope.label
-            return payload
-        if not requires_analytics_pipeline(message, scope, intent):
+        elif not requires_analytics_pipeline(message, scope, intent):
             payload = direct_football_clarification_payload(message, scope)
-            payload["intent"] = "direct_football_reply"
+            payload["intent"] = "external_fact"
             payload["scope"] = scope.label
             return payload
-        fallback_mode = requires_web_fallback(connection, message, scope, domain)
-        if fallback_mode:
-            payload = build_web_fallback_payload(message, domain)
         else:
             if intent == "team_performance":
                 payload = team_performance_response(connection, scope, message)
@@ -4771,10 +5113,17 @@ def chat_response(message: str, duckdb_path: str = DEFAULT_DUCKDB_PATH) -> dict:
                 payload = scoring_trend_response(connection, scope)
             else:
                 payload = general_overview_response(connection, scope)
-            payload = enrich_warehouse_payload(connection, duckdb_path, message, scope, intent, payload, domain)
+
+        fallback_mode = requires_web_fallback(connection, message, scope, domain)
+        if fallback_mode:
+            payload = build_web_fallback_payload(message, domain)
+            payload["intent"] = "external_fact"
+            payload["scope"] = domain.external_label or scope.label
+            return payload
+
+        payload = enrich_warehouse_payload(connection, duckdb_path, message, scope, intent, payload, domain)
+        payload["intent"] = intent
+        payload["scope"] = scope.label
+        return payload
     finally:
         connection.close()
-
-    payload["intent"] = intent
-    payload["scope"] = domain.external_label or scope.label if fallback_mode else scope.label
-    return payload

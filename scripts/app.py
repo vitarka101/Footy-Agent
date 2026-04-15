@@ -35,6 +35,7 @@ from scripts.football_ui_service import (
     ensure_duckdb_file,
     open_connection,
     parse_gcs_uri,
+    resolve_message_with_recent_context,
     standings_payload,
     table_payload,
 )
@@ -161,6 +162,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 class ChatRequest(BaseModel):
     message: str
     duckdb_path: str = DUCKDB_PATH
+    history: list[dict] = []
 
 
 class ChatResponse(BaseModel):
@@ -830,23 +832,33 @@ def enriched_dashboard_payload(duckdb_path: str) -> dict:
     return payload
 
 
-def build_chat_payload(message: str, duckdb_path: str) -> dict:
-    tool_payload, tool_fallback_used = try_tool_calling_chat_payload(message, duckdb_path)
+def build_chat_payload(message: str, duckdb_path: str, history: list[dict] | None = None) -> dict:
+    effective_message = message
+    try:
+        connection = open_connection(duckdb_path)
+        try:
+            effective_message, _ = resolve_message_with_recent_context(connection, message, history or [])
+        finally:
+            connection.close()
+    except Exception as exc:
+        LOGGER.warning("Recent-context resolution failed, using raw message: %s", exc)
+
+    tool_payload, tool_fallback_used = try_tool_calling_chat_payload(effective_message, duckdb_path)
     if tool_payload is not None:
         tool_payload["model"] = MODEL
         tool_payload["provider"] = provider_label(MODEL)
         tool_payload["fallback_used"] = tool_fallback_used
         return tool_payload
 
-    analysis_payload = chat_response(message, duckdb_path)
-    runtime_payload, runtime_fallback_used = try_runtime_query_payload(message, duckdb_path, analysis_payload)
+    analysis_payload = chat_response(effective_message, duckdb_path)
+    runtime_payload, runtime_fallback_used = try_runtime_query_payload(effective_message, duckdb_path, analysis_payload)
     if runtime_payload is not None:
         runtime_payload["model"] = MODEL
         runtime_payload["provider"] = provider_label(MODEL)
         runtime_payload["fallback_used"] = runtime_fallback_used
         return runtime_payload
 
-    answer, fallback_used = generate_model_answer(message, analysis_payload)
+    answer, fallback_used = generate_model_answer(effective_message, analysis_payload)
     analysis_payload["answer"] = answer
     analysis_payload["model"] = MODEL
     analysis_payload["provider"] = provider_label(MODEL)
@@ -970,7 +982,7 @@ def post_chat(request: ChatRequest) -> dict:
         )
 
     try:
-        return build_chat_payload(message, request.duckdb_path)
+        return build_chat_payload(message, request.duckdb_path, request.history)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover - runtime API protection
