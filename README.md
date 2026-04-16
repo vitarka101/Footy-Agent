@@ -1,5 +1,8 @@
 # Footy Agent
 
+**Live App:** https://footy-agent-648786197436.us-central1.run.app  
+**Main surfaces:** `/`, `/standings-page`, `/betting-room-page`
+
 Footy Agent is designed to be useful both for football newcomers and for users who want a more analytical view of the game.
 
 For a beginner, the project works as an interactive football explainer: a user can ask simple questions about leagues, scoring, home advantage, missing data, correlations, and general football concepts, and the app responds with grounded summaries instead of requiring the user to already understand the sport’s statistics ecosystem.
@@ -30,7 +33,7 @@ The project ships as a single FastAPI application with two user-facing analysis 
 
 ### End-to-End Architecture
 
-![Footy Agent System Design](footy_agent_system_design.png)
+![Footy Agent System Design](<Pics/architecture_diagram.png>)
 
 Footy Agent is designed as a **layered football analytics platform** rather than a single chatbot call. The architecture separates the product into clear tiers so that each part of the workflow maps to a real engineering responsibility.
 
@@ -139,6 +142,20 @@ The Analyst Desk is the main Project 2 surface. It accepts football questions an
 
 This logic lives in [chat_response](scripts/football_ui_service.py), which is called from [build_chat_payload](scripts/app.py).
 
+#### Analyst Desk Example Output
+
+![Analyst Desk Curated Result](Pics/1.png)
+
+*Example of a warehouse-backed answer for **“How has home advantage changed over time in La Liga?”** The response includes a curated result card, executive summary, KPI tiles, and a grounded hypothesis rather than only freeform chat text.*
+
+![Analyst Desk Trend View](Pics/2.png)
+
+*The analyst workflow also renders question-specific visualizations. This season-level line chart shows home-win, away-win, and draw rates over time so the user can directly inspect whether venue advantage is widening, narrowing, or staying stable.*
+
+![Analyst Desk Venue Pressure Map](Pics/3.png)
+
+*The venue pressure map compresses multiple venue-sensitive metrics into one surface, making standout seasons easier to detect than in separate charts alone.*
+
 ### Betting Room
 
 The Betting Room is a second, distinct analysis surface. It is not just a static calculator. It performs a runtime mini-pipeline for a selected fixture:
@@ -153,6 +170,22 @@ The Betting Room is a second, distinct analysis surface. It is not just a static
 8. write a persistent markdown artifact to disk
 
 The entrypoint is [run_betting_analysis](scripts/betting_room_service.py).
+
+#### Standings Page Snapshot
+
+![Standings Page](Pics/4.png)
+
+*The standings page is a separate refresh-aware surface that gives league-table context, form signals, title-gap summaries, and quick monitoring of current-season league state.*
+
+#### Betting Room Example Output
+
+![Betting Room Probability Analysis](Pics/5.png)
+
+*The Betting Room lets the user choose a league, season, model, and fixture, then returns win/draw/loss probabilities, expected goals, most likely score, and an exact-score heatmap built from the fitted model.*
+
+![Betting Room Thesis and Tool Trace](Pics/6.png)
+
+*Below the headline probabilities, the page exposes model-assumption checks, predicted-vs-actual table context, and backend tool traces so the final betting thesis remains inspectable and evidence-backed.*
 
 ## Flow
 
