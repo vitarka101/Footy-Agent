@@ -162,6 +162,15 @@ This logic lives in [chat_response](scripts/football_ui_service.py), which is ca
 
 *The venue pressure map compresses multiple venue-sensitive metrics into one surface, making standout seasons easier to detect than in separate charts alone.*
 
+
+### Standings Page
+
+![Standings Page](Pics/4.png)
+
+
+*The standings page is a separate refresh-aware surface that gives league-table context, form signals, title-gap summaries, and quick monitoring of current-season league state.*
+
+
 ### Betting Room
 
 The Betting Room is a second, distinct analysis surface. It is not just a static calculator. It performs a runtime mini-pipeline for a selected fixture:
@@ -177,11 +186,6 @@ The Betting Room is a second, distinct analysis surface. It is not just a static
 
 The entrypoint is [run_betting_analysis](scripts/betting_room_service.py).
 
-#### Standings Page Snapshot
-
-![Standings Page](Pics/4.png)
-
-*The standings page is a separate refresh-aware surface that gives league-table context, form signals, title-gap summaries, and quick monitoring of current-season league state.*
 
 #### Betting Room Example Output
 
