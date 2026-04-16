@@ -10,7 +10,7 @@ For a beginner, the project works as an interactive football explainer: a user c
 
 For a more analytical user, the system acts like a lightweight football research assistant. It can surface long-term league trends, compare competitions, inspect data quality, identify relationships between match metrics, and turn those findings into a concrete hypothesis with supporting evidence.
 
-For a betting-oriented users, the Betting Room extends that workflow into decision support. It retrieves current and historical match data, estimates probabilities with Poisson-family models, compares those probabilities against bookmaker odds when available, and produces a betting thesis that highlights whether the model sees a meaningful edge or only a weak lean.
+For a betting-oriented user, the Betting Room extends that workflow into decision support. It retrieves current and historical match data, estimates probabilities with Poisson-family models, compares those probabilities against bookmaker odds when available, and produces a betting thesis that highlights whether the model sees a meaningful edge or only a weak lean.
 
 In short, the project is meant to cover three practical use cases in one system:
 
@@ -368,25 +368,7 @@ This script uses:
 - `pandas`
 - `plotly`
 
-It computes and writes persistent analysis artifacts such as:
-
-- overview summaries
-- aggregate trend views
-- segment comparisons
-- correlation outputs
-- missingness scans
-- outlier/distribution plots
-
-This reinforces the project’s EDA depth beyond the interactive UI.
-
-### Why This Counts As Real EDA
-
-This project meets the EDA requirement because:
-
-- at least one tool call computes over collected data
-- the app adapts to the question
-- the exploration surfaces specific findings
-- those findings feed into the final hypothesis
+It computes and writes persistent analysis artifacts such as overview summaries, aggregate trend views, segment comparisons, correlation outputs, missingness scans, outlier/distribution plots.
 
 Examples:
 
@@ -397,7 +379,7 @@ Examples:
 
 ## Step 3: Hypothesize
 
-This project satisfies `Hypothesize` by building grounded claims from the EDA outputs.
+This project  `Hypothesize` by building grounded claims from the EDA outputs.
 
 ### Analyst Desk Hypothesis Path
 
@@ -441,11 +423,9 @@ The betting hypothesis uses:
 
 This is a direct data-backed “so what?” layer, which is exactly what the hypothesis stage is supposed to produce.
 
-## Core Requirements
+## Core Implementation
 
 ### Frontend
-
-Implemented.
 
 Primary UI files:
 
@@ -467,8 +447,6 @@ Frontend behavior includes:
 - probability and test visualization
 
 ### Agent Framework
-
-Implemented with `Agno`.
 
 Evidence:
 
@@ -534,10 +512,6 @@ Betting tools:
 - [simulate_league_tool](scripts/betting_room_service.py)
 - [evaluate_value_bet_tool](scripts/betting_room_service.py)
 - [build_hypothesis_tool](scripts/betting_room_service.py)
-
-### Non-Trivial Dataset
-
-Implemented.
 
 Primary source:
 
@@ -609,8 +583,6 @@ This project implements below concepts.
 
 ### 1. Parallel Execution
 
-Implemented.
-
 Evidence:
 
 - [run_dynamic_eda](scripts/football_ui_service.py)
@@ -619,8 +591,6 @@ Evidence:
 Parallelism is used to reduce latency and to aggregate independent specialist outputs.
 
 ### 2. Structured Output
-
-Implemented.
 
 API schemas in [scripts/app.py](scripts/app.py):
 
@@ -647,8 +617,6 @@ Structured payloads are also used for:
 
 ### 3. Artifacts
 
-Implemented.
-
 Persistent artifact generation:
 
 - [write_analysis_artifact](scripts/betting_room_service.py): writes markdown reports for betting analyses
@@ -657,8 +625,6 @@ Persistent artifact generation:
 
 ### 4. Second Data Retrieval Method
 
-Implemented.
-
 This project uses multiple retrieval modes:
 
 - external CSV retrieval from `football-data.co.uk`
@@ -666,8 +632,6 @@ This project uses multiple retrieval modes:
 - live web search and crawl fallback
 
 ### 5. Data Visualization
-
-Implemented.
 
 Backend chart constructors in [scripts/football_ui_service.py](scripts/football_ui_service.py):
 
@@ -694,8 +658,6 @@ Betting Room visualizations:
 - backend tool trace
 
 ### 6. Code Execution
-
-Implemented.
 
 The project performs real runtime code execution using:
 
