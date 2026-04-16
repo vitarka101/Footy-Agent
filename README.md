@@ -272,25 +272,6 @@ What happens:
 - collects external snippets and page text
 - packages them into an external football answer
 
-### Why The Dataset Is Non-Trivial
-
-The project uses a warehouse-sized football dataset with:
-
-- multiple countries
-- multiple leagues
-- many seasons
-- match-level facts
-- result fields
-- goals
-- shots
-- shots on target
-- cards
-- corners
-- referee/time columns
-- bookmaker odds in the betting path when present
-
-This is materially different from a tiny bundled example file.
-
 ## Step 2: Explore and Analyze (EDA)
 
 This project satisfies `EDA` by explicitly computing over collected data before answering. It does not jump directly from question to unsupported model prose.
