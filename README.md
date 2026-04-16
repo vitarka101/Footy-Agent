@@ -1,6 +1,7 @@
 # Footy Agent
 
-**Live App:** https://footy-agent-648786197436.us-central1.run.app  
+[Live App](https://footy-agent-648786197436.us-central1.run.app)
+
 **Main surfaces:** `/`, `/standings-page`, `/betting-room-page`
 
 Footy Agent is designed to be useful both for football newcomers and for users who want a more analytical view of the game.
@@ -33,7 +34,12 @@ The project ships as a single FastAPI application with two user-facing analysis 
 
 ### End-to-End Architecture
 
-![Footy Agent System Design](<Pics/architecture_diagram.png>)
+<!-- ![Footy Agent System Design](<Pics/architecture_diagram.png>) -->
+
+<p align="center">
+  <img src="Pics/architecture_diagram.png" alt="Footy Agent System Design" width="50%">
+</p>
+
 
 Footy Agent is designed as a **layered football analytics platform** rather than a single chatbot call. The architecture separates the product into clear tiers so that each part of the workflow maps to a real engineering responsibility.
 
@@ -123,7 +129,7 @@ So DuckDB serves as both the **warehouse** and the **runtime query engine** for 
 
 ### Analyst Desk
 
-The Analyst Desk is the main Project 2 surface. It accepts football questions and routes them through a strict three-mode policy:
+The Analyst Desk accepts football questions and routes them through a strict three-mode policy:
 
 1. `Warehouse-backed football analysis`
    If the question is football-related and the local DuckDB warehouse contains the needed grain, the app returns:
