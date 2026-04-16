@@ -963,6 +963,13 @@ def run_betting_analysis(
     force_refresh: bool = False,
     duckdb_path: str = DEFAULT_DUCKDB_PATH,
 ) -> dict:
+    """Run the full betting-room analysis pipeline for one selected fixture.
+
+    The flow collects match data, builds a training set, fans out into
+    probability, assumption-test, and league-context specialists, evaluates any
+    bookmaker edge, synthesizes a betting hypothesis, and writes a persistent
+    markdown artifact for the run.
+    """
     started = time.perf_counter()
     tool_calls: list[dict] = []
 

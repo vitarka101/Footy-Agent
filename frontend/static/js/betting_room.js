@@ -4,6 +4,8 @@ const state = {
   forceRefresh: false,
 };
 
+const REFRESH_STORAGE_KEY = "footy_agent_refresh_job";
+
 const elements = {
   league: document.getElementById("betting-league"),
   season: document.getElementById("betting-season"),
@@ -13,7 +15,6 @@ const elements = {
   homeTeam: document.getElementById("betting-home-team"),
   awayTeam: document.getElementById("betting-away-team"),
   analyzeButton: document.getElementById("betting-analyze"),
-  refreshButton: document.getElementById("betting-refresh"),
   sourceSummary: document.getElementById("betting-source-summary"),
   fixtureTitle: document.getElementById("betting-fixture-title"),
   runtimeBadge: document.getElementById("betting-runtime-badge"),
@@ -32,6 +33,7 @@ const elements = {
   predictedTable: document.getElementById("betting-predicted-table"),
   actualTable: document.getElementById("betting-actual-table"),
   tools: document.getElementById("betting-tools"),
+  sharedRefreshStatus: document.getElementById("shared-refresh-status"),
 };
 
 const MODELS = ["Maher", "Dixon-Coles", "Dixon-Coles TD", "Bivariate Poisson", "Negative Binomial"];
@@ -64,6 +66,46 @@ function currentRequestBody() {
     train_pct: Number(elements.trainPct.value),
     force_refresh: state.forceRefresh,
   };
+}
+
+function setSharedRefreshStatus(message) {
+  if (elements.sharedRefreshStatus) {
+    elements.sharedRefreshStatus.textContent = message;
+  }
+}
+
+function clearRefreshJob() {
+  window.localStorage.removeItem(REFRESH_STORAGE_KEY);
+}
+
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function trackSharedRefreshStatus() {
+  const jobId = window.localStorage.getItem(REFRESH_STORAGE_KEY);
+  if (!jobId) {
+    setSharedRefreshStatus("");
+    return;
+  }
+
+  while (true) {
+    const response = await fetch(`/refresh/${jobId}`);
+    if (!response.ok) {
+      clearRefreshJob();
+      setSharedRefreshStatus("");
+      return;
+    }
+    const payload = await response.json();
+    if (payload.status === "queued" || payload.status === "running") {
+      setSharedRefreshStatus("Refreshing in progress...");
+      await wait(1500);
+      continue;
+    }
+    clearRefreshJob();
+    setSharedRefreshStatus(payload.status === "succeeded" ? "Refresh done." : "");
+    return;
+  }
 }
 
 async function loadOptions() {
@@ -321,10 +363,6 @@ function wireEvents() {
   elements.season.addEventListener("change", refreshOptionsFromControls);
   elements.homeTeam.addEventListener("change", syncTeamSelectors);
   elements.analyzeButton.addEventListener("click", analyze);
-  elements.refreshButton.addEventListener("click", async () => {
-    state.forceRefresh = true;
-    await analyze();
-  });
 }
 
 async function bootstrap() {
@@ -336,6 +374,7 @@ async function bootstrap() {
   elements.trainPctLabel.textContent = `${Math.round(Number(elements.trainPct.value) * 100)}%`;
   await loadOptions();
   wireEvents();
+  trackSharedRefreshStatus().catch(() => setSharedRefreshStatus(""));
 }
 
 bootstrap().catch((error) => {

@@ -277,6 +277,18 @@ def add_or_replace_string_column(table: pa.Table, column_name: str, value: str) 
     return table.append_column(column_name, column_array)
 
 
+def ensure_expected_warehouse_columns(table: pa.Table) -> pa.Table:
+    enriched = table
+    row_count = len(enriched)
+    for column_name in sorted(STRING_COLUMNS):
+        if column_name not in enriched.column_names:
+            enriched = enriched.append_column(column_name, pa.array([None] * row_count, type=pa.string()))
+    for column_name in sorted(INTEGER_COLUMNS):
+        if column_name not in enriched.column_names:
+            enriched = enriched.append_column(column_name, pa.array([None] * row_count, type=pa.int64()))
+    return enriched
+
+
 def attach_partition_columns(
     table: pa.Table,
     country: str,
@@ -291,7 +303,7 @@ def attach_partition_columns(
     enriched = add_or_replace_string_column(enriched, "season", season)
     enriched = add_or_replace_string_column(enriched, "source_url", source_url)
     enriched = add_or_replace_string_column(enriched, "source_type", source_type)
-    return enriched
+    return ensure_expected_warehouse_columns(enriched)
 
 
 def quote_identifier(value: str) -> str:

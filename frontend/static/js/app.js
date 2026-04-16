@@ -8,6 +8,8 @@ const state = {
   refreshing: false,
 };
 
+const REFRESH_STORAGE_KEY = "footy_agent_refresh_job";
+
 const elements = {
   navAnalystDesk: document.getElementById("nav-analyst-desk"),
   navStandings: document.getElementById("nav-standings"),
@@ -595,16 +597,6 @@ function renderTable(table) {
   `;
 }
 
-function renderMessageSuggestions(suggestions = []) {
-  if (!suggestions.length) return "";
-  const buttons = suggestions
-    .map(
-      (prompt) => `<button class="message-suggestion" type="button" data-prompt="${escapeHtml(prompt)}">${escapeHtml(prompt)}</button>`,
-    )
-    .join("");
-  return `<div class="message-suggestions">${buttons}</div>`;
-}
-
 function renderSources(sources = []) {
   if (!sources.length) return "";
   const items = sources
@@ -822,7 +814,6 @@ function renderAnalysisCanvas() {
     ${message.loading ? "" : renderCharts(message.charts)}
     ${message.loading ? "" : supportingTable}
     ${message.loading ? "" : renderSources(message.sources)}
-    ${message.loading ? "" : renderMessageSuggestions(message.suggestions)}
   `;
 
   const simpleBody = (message.isConversational || message.isSimpleResponse)
@@ -830,7 +821,6 @@ function renderAnalysisCanvas() {
     <section class="analysis-section-card">
       <div class="section-kicker">${escapeHtml(message.isConversational ? "Reply" : "Answer")}</div>
       <div class="analysis-answer-text">${escapeHtml(message.text)}</div>
-      ${message.suggestions?.length ? renderMessageSuggestions(message.suggestions) : ""}
     </section>
   `
     : "";
@@ -1072,6 +1062,7 @@ function delegateHistoryClicks(event) {
 }
 
 function setRefreshState(isRefreshing, message) {
+  if (!elements.refreshDataButton || !elements.refreshStatusBadge) return;
   state.refreshing = isRefreshing;
   elements.refreshDataButton.disabled = isRefreshing;
   elements.refreshDataButton.textContent = isRefreshing ? "Refreshing..." : "Refresh Data";
@@ -1080,6 +1071,15 @@ function setRefreshState(isRefreshing, message) {
 
 function wait(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function writeRefreshJob(jobId) {
+  if (!jobId) return;
+  window.localStorage.setItem(REFRESH_STORAGE_KEY, jobId);
+}
+
+function clearRefreshJob() {
+  window.localStorage.removeItem(REFRESH_STORAGE_KEY);
 }
 
 async function pollRefreshJob(jobId) {
@@ -1091,22 +1091,26 @@ async function pollRefreshJob(jobId) {
 
     const payload = await response.json();
     if (payload.status === "queued" || payload.status === "running") {
+      setRefreshState(true, "Refreshing in progress...");
       await wait(1500);
       continue;
     }
     if (payload.status === "succeeded") {
+      clearRefreshJob();
       return payload;
     }
 
+    clearRefreshJob();
     const detail = `${payload.detail} ${payload.output_tail?.join(" | ") || ""}`.trim();
     throw new Error(detail || "Refresh failed.");
   }
 }
 
 async function refreshData() {
+  if (!elements.refreshDataButton || !elements.refreshStatusBadge) return;
   if (state.refreshing) return;
 
-  setRefreshState(true, "");
+  setRefreshState(true, "Refreshing in progress...");
   try {
     const response = await fetch("/refresh", {
       method: "POST",
@@ -1130,14 +1134,24 @@ async function refreshData() {
     }
 
     const payload = await response.json();
-    const finalStatus = await pollRefreshJob(payload.job_id);
-    await loadDashboard();
-    if (state.currentView === "standings" || state.standings) {
-      await loadStandings(state.standings?.selected_country || "", state.standings?.selected_league || "");
+    writeRefreshJob(payload.job_id);
+    await pollRefreshJob(payload.job_id);
+    try {
+      await loadDashboard();
+      if (state.currentView === "standings" || state.standings) {
+        await loadStandings(state.standings?.selected_country || "", state.standings?.selected_league || "");
+      }
+    } catch (error) {
+      // Keep the currently rendered data if the post-refresh reload path fails.
     }
-    setRefreshState(false, finalStatus.detail);
+    setRefreshState(false, "Refresh done.");
   } catch (error) {
-    setRefreshState(false, error.message);
+    clearRefreshJob();
+    // Keep refresh failures silent and continue showing the previously loaded data.
+  } finally {
+    if (state.refreshing) {
+      setRefreshState(false, "");
+    }
   }
 }
 
@@ -1147,18 +1161,6 @@ async function handleStandingsCountryChange() {
 
 async function handleStandingsLeagueChange() {
   await loadStandings(elements.standingsCountry.value, elements.standingsLeague.value);
-}
-
-async function handleStandingsView() {
-  setActiveView("standings");
-  if (!state.standings) {
-    elements.standingsTable.innerHTML = `<div class="standings-empty">Loading standings...</div>`;
-    try {
-      await loadStandings();
-    } catch (error) {
-      elements.standingsTable.innerHTML = `<div class="standings-empty">${escapeHtml(error.message)}</div>`;
-    }
-  }
 }
 
 function handleAnalystView() {
@@ -1179,9 +1181,10 @@ function handleInitialLoadError(error) {
 
 async function boot() {
   elements.chatForm.addEventListener("submit", handleChatSubmit);
-  elements.refreshDataButton.addEventListener("click", refreshData);
+  if (elements.refreshDataButton) {
+    elements.refreshDataButton.addEventListener("click", refreshData);
+  }
   elements.navAnalystDesk?.addEventListener("click", handleAnalystView);
-  elements.navStandings?.addEventListener("click", handleStandingsView);
   elements.standingsCountry?.addEventListener("change", handleStandingsCountryChange);
   elements.standingsLeague?.addEventListener("change", handleStandingsLeagueChange);
   document.addEventListener("click", delegatePromptClicks);

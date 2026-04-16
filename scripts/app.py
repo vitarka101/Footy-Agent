@@ -4,18 +4,18 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-
+import duckdb
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from google.cloud import storage
 from pydantic import BaseModel
 
 try:
@@ -32,9 +32,7 @@ from scripts.football_ui_service import (
     DEFAULT_DUCKDB_PATH,
     chat_response,
     dashboard_payload,
-    ensure_duckdb_file,
     open_connection,
-    parse_gcs_uri,
     resolve_message_with_recent_context,
     standings_payload,
     table_payload,
@@ -58,7 +56,6 @@ MODEL = os.getenv("MODEL", "vertex_ai/gemini-2.5-flash-lite")
 LITELLM_API_BASE = os.getenv("LITELLM_API_BASE", "").strip()
 LITELLM_API_KEY = os.getenv("LITELLM_API_KEY", "").strip()
 DUCKDB_PATH = os.getenv("DUCKDB_PATH", DEFAULT_DUCKDB_PATH)
-DUCKDB_GCS_URI = os.getenv("DUCKDB_GCS_URI", "").strip()
 MAX_MESSAGE_CHARS = int(os.getenv("MAX_MESSAGE_CHARS", "4000"))
 MODEL_TIMEOUT_SECONDS = float(os.getenv("MODEL_TIMEOUT_SECONDS", "20"))
 REFRESH_BUCKET = os.getenv("FOOTBALL_DATA_BUCKET", "footy-agent").strip()
@@ -69,7 +66,7 @@ REFRESH_PROJECT_ID = (
     or "agentic-ai-ak5486"
 ).strip()
 REFRESH_BUCKET_PREFIX = os.getenv("FOOTBALL_DATA_BUCKET_PREFIX", "").strip()
-REFRESH_WORKERS = int(os.getenv("FOOTBALL_DATA_WORKERS", "4"))
+REFRESH_WORKERS = int(os.getenv("FOOTBALL_DATA_WORKERS", "8"))
 REFRESH_LOOKBACK_DAYS = int(os.getenv("FOOTBALL_DATA_LOOKBACK_DAYS", "2"))
 REFRESH_TIMEOUT_SECONDS = int(os.getenv("REFRESH_TIMEOUT_SECONDS", "1200"))
 REFRESH_LOCK = threading.Lock()
@@ -153,7 +150,6 @@ Rules:
 
 print(f"[STARTUP] MODEL={MODEL}")
 print(f"[STARTUP] DUCKDB_PATH={DUCKDB_PATH}")
-print(f"[STARTUP] DUCKDB_GCS_URI={'SET' if DUCKDB_GCS_URI else 'NOT SET'}")
 
 app = FastAPI(title="Footy Agent", version="2.0.0")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -390,37 +386,57 @@ class RefreshStatusResponse(BaseModel):
     finished_at: str | None = None
 
 
-def build_refresh_command(lookback_days: int | None) -> list[str]:
+def build_refresh_command(lookback_days: int | None, duckdb_path: str) -> list[str]:
     command = [
         sys.executable,
         str(BASE_DIR / "scripts" / "football_data_to_gcs.py"),
         "--duckdb-path",
-        DUCKDB_PATH,
+        duckdb_path,
         "--workers",
         str(REFRESH_WORKERS),
         "--lookback-days",
         str(lookback_days or REFRESH_LOOKBACK_DAYS),
     ]
-    if REFRESH_BUCKET:
-        command.extend(["--bucket", REFRESH_BUCKET])
-    if REFRESH_PROJECT_ID:
-        command.extend(["--project-id", REFRESH_PROJECT_ID])
-    if REFRESH_BUCKET_PREFIX:
-        command.extend(["--bucket-prefix", REFRESH_BUCKET_PREFIX])
     return command
 
 
-def upload_duckdb_snapshot() -> None:
-    if not DUCKDB_GCS_URI:
-        return
-    database_path = Path(DUCKDB_PATH)
-    if not database_path.exists():
-        return
+def refresh_staging_duckdb_path(job_id: str) -> Path:
+    target = Path(DUCKDB_PATH)
+    suffix = target.suffix or ".duckdb"
+    return target.with_name(f"{target.stem}.refresh-{job_id}{suffix}")
 
-    bucket_name, object_name = parse_gcs_uri(DUCKDB_GCS_URI)
-    client = storage.Client(project=REFRESH_PROJECT_ID or None)
-    blob = client.bucket(bucket_name).blob(object_name)
-    blob.upload_from_filename(str(database_path))
+
+def prepare_refresh_staging_file(staged_path: Path) -> None:
+    live_path = Path(DUCKDB_PATH)
+    staged_path.parent.mkdir(parents=True, exist_ok=True)
+    staged_path.unlink(missing_ok=True)
+    if live_path.exists():
+        shutil.copy2(live_path, staged_path)
+        return
+    live_path.parent.mkdir(parents=True, exist_ok=True)
+    duckdb.connect(str(staged_path)).close()
+
+
+def validate_refreshed_duckdb(staged_path: Path) -> None:
+    connection = duckdb.connect(str(staged_path), read_only=True)
+    try:
+        row = connection.execute(
+            """
+            SELECT count(*)
+            FROM information_schema.tables
+            WHERE lower(table_name) = 'matches'
+            """
+        ).fetchone()
+        if not row or int(row[0]) < 1:
+            raise ValueError("Refreshed DuckDB file does not contain the matches table.")
+    finally:
+        connection.close()
+
+
+def promote_refreshed_duckdb(staged_path: Path) -> None:
+    target = Path(DUCKDB_PATH)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staged_path.replace(target)
 
 
 def utc_now_iso() -> str:
@@ -464,10 +480,19 @@ def clear_active_refresh_job(job_id: str) -> None:
 
 
 def run_refresh_job(job_id: str, lookback_days: int) -> None:
+    """Refresh the warehouse in the background using a staged DuckDB copy.
+
+    The live DuckDB file keeps serving reads while the refresh subprocess updates
+    a temporary copy. Only a validated staged file is promoted over the live
+    file, which keeps the homepage-triggered refresh non-blocking for the rest
+    of the product surfaces.
+    """
     update_refresh_job(job_id, status="running", detail="Refresh job is running.", started_at=utc_now_iso())
 
+    staged_path = refresh_staging_duckdb_path(job_id)
     try:
-        command = build_refresh_command(lookback_days)
+        prepare_refresh_staging_file(staged_path)
+        command = build_refresh_command(lookback_days, str(staged_path))
         completed = subprocess.run(
             command,
             cwd=str(BASE_DIR),
@@ -491,11 +516,12 @@ def run_refresh_job(job_id: str, lookback_days: int) -> None:
             )
             return
 
-        upload_duckdb_snapshot()
+        validate_refreshed_duckdb(staged_path)
+        promote_refreshed_duckdb(staged_path)
         update_refresh_job(
             job_id,
             status="succeeded",
-            detail="Recent football data refreshed in GCS and DuckDB.",
+            detail="Refresh done.",
             output_tail=output_tail,
             finished_at=utc_now_iso(),
         )
@@ -515,6 +541,7 @@ def run_refresh_job(job_id: str, lookback_days: int) -> None:
             finished_at=utc_now_iso(),
         )
     finally:
+        staged_path.unlink(missing_ok=True)
         REFRESH_LOCK.release()
         clear_active_refresh_job(job_id)
 
@@ -528,13 +555,6 @@ def provider_label(model_name: str) -> str:
     if normalized.startswith("gpt-") or normalized.startswith("openai/"):
         return "OpenAI"
     return "LiteLLM"
-
-
-def env_flag(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def compact_table_context(table: dict | None, max_rows: int = 6) -> str:
@@ -827,7 +847,6 @@ def enriched_dashboard_payload(duckdb_path: str) -> dict:
         "model": MODEL,
         "provider": provider_label(MODEL),
         "duckdb_path": duckdb_path,
-        "duckdb_gcs_backed": bool(DUCKDB_GCS_URI),
     }
     return payload
 
@@ -864,18 +883,6 @@ def build_chat_payload(message: str, duckdb_path: str, history: list[dict] | Non
     analysis_payload["provider"] = provider_label(MODEL)
     analysis_payload["fallback_used"] = fallback_used
     return analysis_payload
-
-
-@app.on_event("startup")
-def preload_duckdb() -> None:
-    should_sync = env_flag("SYNC_DUCKDB_FROM_GCS", default=False)
-    if not Path(DUCKDB_PATH).exists() and not DUCKDB_GCS_URI:
-        return
-
-    try:
-        ensure_duckdb_file(DUCKDB_PATH, duckdb_gcs_uri=DUCKDB_GCS_URI, force_download=should_sync)
-    except Exception as exc:  # pragma: no cover - startup diagnostics only
-        LOGGER.warning("DuckDB preload skipped: %s", exc)
 
 
 @app.get("/")

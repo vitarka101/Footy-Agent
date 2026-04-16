@@ -3,6 +3,8 @@ const state = {
   refreshing: false,
 };
 
+const REFRESH_STORAGE_KEY = "footy_agent_refresh_job";
+
 const elements = {
   standingsPulseTitle: document.getElementById("standings-pulse-title"),
   standingsPulseSummary: document.getElementById("standings-pulse-summary"),
@@ -14,6 +16,7 @@ const elements = {
   standingsTable: document.getElementById("standings-table"),
   refreshDataButton: document.getElementById("refresh-data-button"),
   refreshStatusBadge: document.getElementById("refresh-status-badge"),
+  sharedRefreshStatus: document.getElementById("shared-refresh-status"),
 };
 
 function escapeHtml(value) {
@@ -134,6 +137,7 @@ async function loadStandings(country = "", league = "") {
 }
 
 function setRefreshState(isRefreshing, message) {
+  if (!elements.refreshDataButton || !elements.refreshStatusBadge) return;
   state.refreshing = isRefreshing;
   elements.refreshDataButton.disabled = isRefreshing;
   elements.refreshDataButton.textContent = isRefreshing ? "Refreshing..." : "Refresh Data";
@@ -142,6 +146,42 @@ function setRefreshState(isRefreshing, message) {
 
 function wait(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function setSharedRefreshStatus(message) {
+  if (elements.sharedRefreshStatus) {
+    elements.sharedRefreshStatus.textContent = message;
+  }
+}
+
+function clearRefreshJob() {
+  window.localStorage.removeItem(REFRESH_STORAGE_KEY);
+}
+
+async function trackSharedRefreshStatus() {
+  const jobId = window.localStorage.getItem(REFRESH_STORAGE_KEY);
+  if (!jobId) {
+    setSharedRefreshStatus("");
+    return;
+  }
+
+  while (true) {
+    const response = await fetch(`/refresh/${jobId}`);
+    if (!response.ok) {
+      clearRefreshJob();
+      setSharedRefreshStatus("");
+      return;
+    }
+    const payload = await response.json();
+    if (payload.status === "queued" || payload.status === "running") {
+      setSharedRefreshStatus("Refreshing in progress...");
+      await wait(1500);
+      continue;
+    }
+    clearRefreshJob();
+    setSharedRefreshStatus(payload.status === "succeeded" ? "Refresh done." : "");
+    return;
+  }
 }
 
 async function pollRefreshJob(jobId) {
@@ -166,6 +206,7 @@ async function pollRefreshJob(jobId) {
 }
 
 async function refreshData() {
+  if (!elements.refreshDataButton || !elements.refreshStatusBadge) return;
   if (state.refreshing) return;
 
   setRefreshState(true, "");
@@ -192,11 +233,16 @@ async function refreshData() {
     }
 
     const payload = await response.json();
-    const finalStatus = await pollRefreshJob(payload.job_id);
-    await loadStandings(state.standings?.selected_country || "", state.standings?.selected_league || "");
-    setRefreshState(false, finalStatus.detail);
+    await pollRefreshJob(payload.job_id);
+    try {
+      await loadStandings(state.standings?.selected_country || "", state.standings?.selected_league || "");
+    } catch (error) {
+      // Keep the existing standings visible if the refreshed reload fails.
+    }
   } catch (error) {
-    setRefreshState(false, error.message);
+    // Keep refresh failures silent and continue showing the previously loaded data.
+  } finally {
+    setRefreshState(false, "");
   }
 }
 
@@ -211,13 +257,16 @@ async function handleStandingsLeagueChange() {
 async function boot() {
   elements.standingsCountry.addEventListener("change", handleStandingsCountryChange);
   elements.standingsLeague.addEventListener("change", handleStandingsLeagueChange);
-  elements.refreshDataButton.addEventListener("click", refreshData);
+  if (elements.refreshDataButton) {
+    elements.refreshDataButton.addEventListener("click", refreshData);
+  }
 
   try {
     await loadStandings();
   } catch (error) {
     elements.standingsTable.innerHTML = `<div class="standings-empty">${escapeHtml(error.message)}</div>`;
   }
+  trackSharedRefreshStatus().catch(() => setSharedRefreshStatus(""));
 }
 
 boot();

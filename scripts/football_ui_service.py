@@ -1788,6 +1788,28 @@ def fetch_scope_metrics(connection: duckdb.DuckDBPyConnection, scope: QueryScope
     return int(rows), int(seasons)
 
 
+def fetch_match_columns(connection: duckdb.DuckDBPyConnection) -> set[str]:
+    rows = connection.execute("DESCRIBE matches").fetchall()
+    return {str(row[0]).casefold() for row in rows}
+
+
+def metric_expression(connection: duckdb.DuckDBPyConnection, column_name: str, *, default: str = "NULL") -> str:
+    return sql_identifier(column_name) if column_name.casefold() in fetch_match_columns(connection) else default
+
+
+def sum_expression(
+    connection: duckdb.DuckDBPyConnection,
+    left_column: str,
+    right_column: str,
+    *,
+    default: str = "NULL",
+) -> str:
+    columns = fetch_match_columns(connection)
+    if left_column.casefold() in columns and right_column.casefold() in columns:
+        return f"({sql_identifier(left_column)} + {sql_identifier(right_column)})"
+    return default
+
+
 def fetch_latest_season(
     connection: duckdb.DuckDBPyConnection,
     scope: QueryScope,
@@ -1820,6 +1842,7 @@ def fetch_latest_season(
 
 def fetch_season_trend_frame(connection: duckdb.DuckDBPyConnection, scope: QueryScope) -> pd.DataFrame:
     where_clause, params = scope_clause(scope)
+    total_shots_expr = sum_expression(connection, "hs", "as")
     return connection.execute(
         f"""
         SELECT
@@ -1828,7 +1851,7 @@ def fetch_season_trend_frame(connection: duckdb.DuckDBPyConnection, scope: Query
             round(avg(fthg), 2) AS avg_home_goals,
             round(avg(ftag), 2) AS avg_away_goals,
             round(avg(fthg + ftag), 2) AS avg_total_goals,
-            round(avg(hs + "as"), 1) AS avg_shots,
+            round(avg({total_shots_expr}), 1) AS avg_shots,
             round(avg(CASE WHEN ftr = 'H' THEN 1 ELSE 0 END) * 100, 2) AS home_win_rate,
             round(avg(CASE WHEN ftr = 'D' THEN 1 ELSE 0 END) * 100, 2) AS draw_rate,
             round(avg(CASE WHEN ftr = 'A' THEN 1 ELSE 0 END) * 100, 2) AS away_win_rate
@@ -1849,6 +1872,7 @@ def fetch_latest_league_snapshot(
 ) -> pd.DataFrame:
     snapshot_scope = QueryScope(country=scope.country, season=latest_season)
     where_clause, params = scope_clause(snapshot_scope)
+    total_shots_expr = sum_expression(connection, "hs", "as")
     frame = connection.execute(
         f"""
         SELECT
@@ -1856,8 +1880,13 @@ def fetch_latest_league_snapshot(
             league,
             count(*) AS matches,
             round(avg(fthg + ftag), 2) AS avg_goals,
-            round(avg(hs + "as"), 1) AS avg_shots,
-            round(avg(hy + ay + hr + ar), 2) AS avg_cards,
+            round(avg({total_shots_expr}), 1) AS avg_shots,
+            round(avg(
+                COALESCE({metric_expression(connection, "hy", default="0")}, 0) +
+                COALESCE({metric_expression(connection, "ay", default="0")}, 0) +
+                COALESCE({metric_expression(connection, "hr", default="0")}, 0) +
+                COALESCE({metric_expression(connection, "ar", default="0")}, 0)
+            ), 2) AS avg_cards,
             round(avg(CASE WHEN ftr = 'H' THEN 1 ELSE 0 END) * 100, 1) AS home_win_rate
         FROM matches
         WHERE {where_clause}
@@ -1873,15 +1902,19 @@ def fetch_latest_league_snapshot(
 
 def fetch_data_quality_frame(connection: duckdb.DuckDBPyConnection, scope: QueryScope) -> pd.DataFrame:
     where_clause, params = scope_clause(scope)
+    hs_expr = metric_expression(connection, "hs")
+    hst_expr = metric_expression(connection, "hst")
+    referee_expr = metric_expression(connection, "referee")
+    time_expr = metric_expression(connection, "time")
     return connection.execute(
         f"""
         SELECT
             season,
             {season_sort_sql()} AS season_start_year,
-            round(avg(CASE WHEN hs IS NULL THEN 1 ELSE 0 END) * 100, 1) AS hs_missing_pct,
-            round(avg(CASE WHEN hst IS NULL THEN 1 ELSE 0 END) * 100, 1) AS hst_missing_pct,
-            round(avg(CASE WHEN referee IS NULL THEN 1 ELSE 0 END) * 100, 1) AS referee_missing_pct,
-            round(avg(CASE WHEN time IS NULL THEN 1 ELSE 0 END) * 100, 1) AS time_missing_pct
+            round(avg(CASE WHEN {hs_expr} IS NULL THEN 1 ELSE 0 END) * 100, 1) AS hs_missing_pct,
+            round(avg(CASE WHEN {hst_expr} IS NULL THEN 1 ELSE 0 END) * 100, 1) AS hst_missing_pct,
+            round(avg(CASE WHEN {referee_expr} IS NULL THEN 1 ELSE 0 END) * 100, 1) AS referee_missing_pct,
+            round(avg(CASE WHEN {time_expr} IS NULL THEN 1 ELSE 0 END) * 100, 1) AS time_missing_pct
         FROM matches
         WHERE {where_clause}
         GROUP BY 1, 2
@@ -1893,31 +1926,39 @@ def fetch_data_quality_frame(connection: duckdb.DuckDBPyConnection, scope: Query
 
 def fetch_correlation_frame(connection: duckdb.DuckDBPyConnection, scope: QueryScope) -> pd.DataFrame:
     where_clause, params = scope_clause(scope)
+    total_shots_expr = sum_expression(connection, "hs", "as")
+    total_sot_expr = sum_expression(connection, "hst", "ast")
+    total_corners_expr = sum_expression(connection, "hc", "ac")
     return connection.execute(
         f"""
         SELECT
             fthg,
             ftag,
             (fthg + ftag) AS total_goals,
-            hs,
-            "as" AS away_shots,
-            (hs + "as") AS total_shots,
-            hst,
-            ast,
-            (hst + ast) AS total_shots_on_target,
-            hc,
-            ac,
-            (hc + ac) AS total_corners,
-            hy,
-            ay,
-            hr,
-            ar,
-            (hy + ay + hr + ar) AS total_cards
+            {metric_expression(connection, "hs")} AS hs,
+            {metric_expression(connection, "as")} AS away_shots,
+            {total_shots_expr} AS total_shots,
+            {metric_expression(connection, "hst")} AS hst,
+            {metric_expression(connection, "ast")} AS ast,
+            {total_sot_expr} AS total_shots_on_target,
+            {metric_expression(connection, "hc")} AS hc,
+            {metric_expression(connection, "ac")} AS ac,
+            {total_corners_expr} AS total_corners,
+            {metric_expression(connection, "hy")} AS hy,
+            {metric_expression(connection, "ay")} AS ay,
+            {metric_expression(connection, "hr")} AS hr,
+            {metric_expression(connection, "ar")} AS ar,
+            (
+                COALESCE({metric_expression(connection, "hy", default="0")}, 0) +
+                COALESCE({metric_expression(connection, "ay", default="0")}, 0) +
+                COALESCE({metric_expression(connection, "hr", default="0")}, 0) +
+                COALESCE({metric_expression(connection, "ar", default="0")}, 0)
+            ) AS total_cards
         FROM matches
         WHERE {where_clause}
-          AND hs IS NOT NULL
-          AND hst IS NOT NULL
-          AND hc IS NOT NULL
+          AND {metric_expression(connection, "hs")} IS NOT NULL
+          AND {metric_expression(connection, "hst")} IS NOT NULL
+          AND {metric_expression(connection, "hc")} IS NOT NULL
         """,
         params,
     ).df()
@@ -2003,6 +2044,9 @@ def fetch_recent_team_matches(connection: duckdb.DuckDBPyConnection, team: str, 
 
 def fetch_match_feature_frame(connection: duckdb.DuckDBPyConnection, scope: QueryScope) -> pd.DataFrame:
     where_clause, params = scope_clause(scope)
+    total_shots_expr = sum_expression(connection, "hs", "as")
+    total_sot_expr = sum_expression(connection, "hst", "ast")
+    total_corners_expr = sum_expression(connection, "hc", "ac")
     return connection.execute(
         f"""
         SELECT
@@ -2013,20 +2057,25 @@ def fetch_match_feature_frame(connection: duckdb.DuckDBPyConnection, scope: Quer
             fthg,
             ftag,
             (fthg + ftag) AS total_goals,
-            hs,
-            "as" AS away_shots,
-            (hs + "as") AS total_shots,
-            hst,
-            ast,
-            (hst + ast) AS total_shots_on_target,
-            hc,
-            ac,
-            (hc + ac) AS total_corners,
-            hy,
-            ay,
-            hr,
-            ar,
-            (hy + ay + hr + ar) AS total_cards
+            {metric_expression(connection, "hs")} AS hs,
+            {metric_expression(connection, "as")} AS away_shots,
+            {total_shots_expr} AS total_shots,
+            {metric_expression(connection, "hst")} AS hst,
+            {metric_expression(connection, "ast")} AS ast,
+            {total_sot_expr} AS total_shots_on_target,
+            {metric_expression(connection, "hc")} AS hc,
+            {metric_expression(connection, "ac")} AS ac,
+            {total_corners_expr} AS total_corners,
+            {metric_expression(connection, "hy")} AS hy,
+            {metric_expression(connection, "ay")} AS ay,
+            {metric_expression(connection, "hr")} AS hr,
+            {metric_expression(connection, "ar")} AS ar,
+            (
+                COALESCE({metric_expression(connection, "hy", default="0")}, 0) +
+                COALESCE({metric_expression(connection, "ay", default="0")}, 0) +
+                COALESCE({metric_expression(connection, "hr", default="0")}, 0) +
+                COALESCE({metric_expression(connection, "ar", default="0")}, 0)
+            ) AS total_cards
         FROM matches
         WHERE {where_clause}
           AND ftr IS NOT NULL
@@ -4385,6 +4434,12 @@ def run_framework_planner_decision(
     completed_steps: list[str],
     prior_summaries: list[str],
 ) -> str | None:
+    """Ask the planner agent for the next EDA step in the analyst workflow.
+
+    This is the optional framework-backed branch described in the README:
+    a small planning agent picks one next step from the curated EDA step set
+    instead of letting the full answer depend on a single generic LLM pass.
+    """
     model = build_agno_model(temperature=0)
     if model is None:
         return None
@@ -4606,6 +4661,13 @@ def run_framework_specialist_agent(
     scope: QueryScope,
     intent: str,
 ) -> dict:
+    """Execute one EDA specialist role through the agent framework.
+
+    Each specialist wraps a concrete backend analytical payload and then asks a
+    narrow agent role to summarize the grounded result into a claim, evidence,
+    and caveats. This keeps the multi-agent path tied to real data products
+    instead of freeform synthesis alone.
+    """
     payload_cache: dict[str, dict] = {}
 
     def specialist_tool(**_: object) -> dict:
@@ -4671,6 +4733,12 @@ def run_framework_specialist_agent(
 
 
 def plan_dynamic_eda_steps(profile: dict, intent: str, max_steps: int = 4) -> list[str]:
+    """Build a compact, question-specific EDA plan.
+
+    The planner starts from the profile step and then selects up to `max_steps`
+    additional analytical branches such as trend, segment, correlation,
+    quality, or distribution based on the current warehouse slice.
+    """
     planned_steps: list[str] = []
     completed_steps = ["profile"]
     prior_summaries = [f"Profiled {profile['row_count']:,} rows across {profile['season_count']} seasons."]
@@ -4690,6 +4758,13 @@ def run_dynamic_eda(
     scope: QueryScope,
     intent: str,
 ) -> dict[str, dict]:
+    """Run the warehouse EDA fan-out for one football question.
+
+    The function first profiles the selected slice, then plans a small set of
+    question-specific specialist steps, and finally executes those steps in
+    parallel. The resulting payload is the evidence backbone for the executive
+    summary, charts, and hypothesis shown on the analyst desk.
+    """
     profile = profile_scope_data(connection, scope)
     results: dict[str, dict] = {"profile": profile_tool_payload(profile, scope)}
     planned_steps = plan_dynamic_eda_steps(profile, intent, max_steps=4)
