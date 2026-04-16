@@ -25,6 +25,77 @@ The project ships as a single FastAPI application with two user-facing analysis 
 - `Analyst Desk` at `/`: a chat-driven football analytics assistant over a DuckDB warehouse
 - `Betting Room` at `/betting-room-page`: a separate runtime probability-analysis page for a chosen fixture using Poisson-family models, statistical tests, and a betting thesis
 
+
+## System Design
+
+### End-to-End Architecture
+
+![Footy Agent System Design](footy_agent_system_design.png)
+
+Footy Agent is designed as a **layered football analytics platform** rather than a single chatbot call. The architecture separates the product into clear tiers so that each part of the workflow maps to a real engineering responsibility.
+
+At the top are the **three user-facing surfaces**:
+
+- **Analyst Desk** at `/` for conversational football analytics
+- **Standings Page** at `/standings-page` for league tables and refresh-aware monitoring
+- **Betting Room** at `/betting-room-page` for fixture-level probability analysis and betting decision support
+
+These UIs call a shared **FastAPI application layer** in `app.py`, which acts as the gateway for chat requests, standings requests, betting requests, and warehouse refresh operations.
+
+Beneath that sits the **orchestration layer**, where the application decides how a user request should be handled. On the Analyst Desk side, an **LLM tool-calling router** determines whether the query should go through a direct runtime query path or the broader football analysis pipeline. On the Betting Room side, a dedicated betting orchestrator runs a more mathematical workflow with multiple specialists.
+
+The analytics flow then follows the assignment’s required structure:
+
+### Step 1 — Collect
+
+The system can collect football data from multiple sources:
+
+- **Web CSV retrieval** from `football-data.co.uk`
+- **DuckDB warehouse retrieval** for large multi-league historical analysis
+- **Web search / crawl fallback** for football questions outside warehouse coverage
+
+This gives the application more than one retrieval method and allows it to choose the source that best matches the user’s request.
+
+### Step 2 — Explore & Analyze
+
+Once data is available, the system performs a structured EDA pipeline:
+
+- **Domain + Scope resolution** checks whether the question is football-related and determines the relevant league, country, team, or season
+- **Intent detection** classifies the request into analytical categories such as trends, comparisons, correlations, or data quality
+- **EDA Planner (Agno)** selects the most useful analytical steps for the question
+- **Specialist agents** then execute focused roles:
+  - Trend Detector
+  - Comparison Analyst
+  - Relationship Analyst
+  - Coverage Analyst
+  - Distribution Analyst
+
+These specialist roles are backed by concrete analytical tool calls over collected data, such as season aggregation, league segmentation, pairwise correlation analysis, missingness scans, and distribution summaries.
+
+### Step 3 — Hypothesize & Communicate
+
+After the EDA is complete, the system turns the evidence into a user-facing analytical deliverable:
+
+- a **warehouse hypothesis**
+- an **executive summary**
+- charts and tables
+- a grounded **model answer**
+
+This means the final response is not just freeform LLM text; it is the output of a pipeline that first collects, then analyzes, then synthesizes.
+
+### How DuckDB Is Used
+
+DuckDB is the system’s **local analytical warehouse** and is central to the Analyst Desk workflow.
+
+Instead of loading raw CSV files directly into prompt context, the project stores football data in a structured DuckDB database and queries it at runtime. This allows the application to operate over a non-trivial dataset spanning multiple countries, leagues, seasons, match-level facts, goals, shots, cards, corners, and bookmaker odds fields where available.
+
+DuckDB is used in two important ways:
+
+1. **Query-time retrieval**: for warehouse-answerable questions, the app opens the DuckDB database and runs analytical queries over the `matches` table.
+2. **Analytical compute engine**: DuckDB powers grouped aggregations, time-based trend analysis, filtered league/team slices, correlation preparation, and completeness scans.
+
+So DuckDB serves as both the **warehouse** and the **runtime query engine** for football analytics.
+
 ## Repository Map
 
 - [scripts/app.py](scripts/app.py): FastAPI entrypoint, API schemas, tool-calling router, runtime query path, chat response assembly, refresh job endpoints
@@ -83,7 +154,7 @@ The Betting Room is a second, distinct analysis surface. It is not just a static
 
 The entrypoint is [run_betting_analysis](scripts/betting_room_service.py).
 
-## Assignment Rubric Mapping
+## Flow
 
 ## Step 1: Collect
 
@@ -507,22 +578,10 @@ Cloud build steps:
 - push image
 - deploy service `footy-agent` to Cloud Run
 
-For grading, the live submitted URL should point to this running application.
-
-### README
-
-This README now documents:
-
-- the three assignment steps
-- the exact code locations for each requirement
-- the system architecture
-- the tool-calling layer
-- the multi-agent patterns
-- the betting room math and analysis pipeline
 
 ## Grab-Bag Concepts
 
-This project implements more than the required two elective concepts.
+This project implements below concepts.
 
 ### 1. Parallel Execution
 
@@ -930,7 +989,7 @@ Rendered in [frontend/static/js/betting_room.js](frontend/static/js/betting_room
 
 ## Deployment
 
-The application is packaged for Cloud Run.
+The application is packaged for **Google Cloud Run** and supports both a bundled local DuckDB mode and a **GCS-backed DuckDB snapshot mode**.
 
 ### Container
 
@@ -939,6 +998,7 @@ Implemented in [Dockerfile](Dockerfile):
 - uses Python 3.12 slim
 - installs dependencies via `uv`
 - starts `uvicorn`
+- serves the FastAPI app and frontend templates from a single container image
 
 ### Cloud Build
 
@@ -947,6 +1007,22 @@ Implemented in [cloudbuild.yaml](cloudbuild.yaml):
 - build Docker image
 - push image to GCR
 - deploy service `footy-agent`
+
+### DuckDB + GCS Deployment Pattern
+
+For Cloud Run, the project supports a cloud-backed warehouse pattern:
+
+1. a DuckDB snapshot is stored in GCS
+2. Cloud Run starts a new revision
+3. the application syncs the DuckDB file locally into the running container
+4. runtime analytical queries execute against the local DuckDB copy
+5. refresh jobs can publish a newer snapshot back to GCS
+
+This gives the service a strong balance between:
+
+- **fast local analytical performance** from DuckDB
+- **durable cloud-backed persistence** through GCS
+- **portable warehouse state** across deployments and revisions
 
 The submitted assignment URL should point to the deployed service produced from this pipeline.
 
@@ -997,7 +1073,7 @@ DUCKDB_PATH=football_data.duckdb
 
 ## Refresh Workflow
 
-The project also includes a non-blocking refresh architecture for the warehouse.
+The project includes a **non-blocking refresh architecture** for the warehouse so the UI stays responsive while data sync runs in the background.
 
 Implemented in [scripts/app.py](scripts/app.py):
 
@@ -1005,12 +1081,42 @@ Implemented in [scripts/app.py](scripts/app.py):
 - `GET /refresh/{job_id}`
 - [run_refresh_job](scripts/app.py)
 
-Behavior:
+### End-to-End Refresh Flow
 
-- the request enqueues a background job
-- a daemon thread runs the refresh subprocess
-- the UI polls job status
-- the endpoint no longer blocks the web request while data sync runs
+When the homepage **Refresh Data** button is clicked:
+
+1. the frontend sends `POST /refresh`
+2. this is triggered from [frontend/static/js/app.js](frontend/static/js/app.js)
+3. the backend route `refresh_data(...)` creates a background refresh job
+4. the route immediately returns a `job_id`
+5. the backend starts a daemon thread with `run_refresh_job(...)`
+6. the frontend polls `GET /refresh/{job_id}`
+7. polling continues until the job is no longer `queued` or `running`
+
+Inside the background thread, the application runs the incremental refresh script through `run_refresh_job(...)`.
+
+### Why This Design Is Important
+
+This keeps the request/response path fast for the user. The browser does not need to wait for the full warehouse update to finish before getting a response.
+
+It also gives the system a form of **application-level atomicity** and safe publication semantics:
+
+- the refresh runs in the background
+- the job only reaches a successful terminal state if the refresh subprocess completes successfully
+- only after success is the updated DuckDB snapshot eligible to be published back to GCS
+- if the refresh fails or times out, the old published snapshot remains the last valid warehouse version
+
+So the system avoids exposing a half-written or partially refreshed warehouse snapshot.
+
+### Concurrency Safety
+
+The refresh layer also uses a refresh lock and a single active-job tracker so that:
+
+- only one refresh job is active at a time
+- concurrent writers do not publish overlapping warehouse states
+- the frontend always has a single refresh status to poll
+
+This makes the refresh workflow much more production-like than a synchronous blocking update triggered directly from the request thread.
 
 ## Example Questions
 
@@ -1031,28 +1137,6 @@ Out-of-context examples:
 
 - `What is the weather in New York today?`
 - `Summarize Bitcoin prices this week.`
-
-## Notes For Graders
-
-If you want the fastest way to verify rubric coverage, inspect these files in order:
-
-1. [scripts/app.py](scripts/app.py)
-   This shows the FastAPI app, Pydantic schemas, tool-calling router, refresh jobs, and public routes.
-
-2. [scripts/football_ui_service.py](scripts/football_ui_service.py)
-   This shows the main analyst workflow: scope resolution, answerability checks, EDA planning, specialist tasks, chart generation, and warehouse hypotheses.
-
-3. [scripts/betting_room_service.py](scripts/betting_room_service.py)
-   This shows the runtime collection path, Poisson-family modeling, statistical tests, market-edge logic, parallel specialist execution, and artifact generation.
-
-4. [frontend/templates/index.html](frontend/templates/index.html) and [frontend/static/js/app.js](frontend/static/js/app.js)
-   This shows the interactive analyst UI and chart rendering.
-
-5. [frontend/templates/betting_room.html](frontend/templates/betting_room.html) and [frontend/static/js/betting_room.js](frontend/static/js/betting_room.js)
-   This shows the separate betting analysis page, including the tool trace and model-assumption display.
-
-6. [cloudbuild.yaml](cloudbuild.yaml) and [Dockerfile](Dockerfile)
-   This shows the deployment pipeline.
 
 ## Testing
 
